@@ -1,0 +1,131 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "Progression.cpp"
+#include <cstdlib>
+#include <iostream>
+#include <limits>
+
+static unsigned checks = 0;
+#define CHECK(expression) do { ++checks; if (!(expression)) { \
+    std::cerr << "FAIL line " << __LINE__ << ": " << #expression << '\n'; std::exit(1); } } while (false)
+
+// Model the important ordering in Player::GiveXP: bonuses -> world maximum ->
+// level loop -> final XP write. Uniform 100-XP levels keep cases readable.
+static void AwardXP(Player& player, ProgressionPlayerScript& script, uint32 xp, uint32 bonus = 0)
+{
+    if (player.level >= world.configs[CONFIG_MAX_PLAYER_LEVEL])
+        return;
+    uint32 remainder = player.fields[PLAYER_XP] + xp + bonus;
+    while (remainder >= 100 && player.level < world.configs[CONFIG_MAX_PLAYER_LEVEL])
+    {
+        remainder -= 100;
+        CHECK(script.OnPlayerCanGiveLevel(&player, static_cast<uint8>(player.level + 1)));
+        ++player.level;
+    }
+    player.fields[PLAYER_XP] = remainder;
+}
+
+int main()
+{
+    ProgressionWorldScript realm;
+    ProgressionPlayerScript hooks;
+    ChatHandler gm;
+    realm.OnAfterConfigLoad(false);
+    CHECK(state.enabled && state.cap == 60);
+    CHECK(world.configs[CONFIG_MAX_PLAYER_LEVEL] == 60);
+    CHECK(world.configs[CONFIG_START_GM_LEVEL] == 60);
+    CHECK(world.configs[CONFIG_START_HEROIC_PLAYER_LEVEL] == 55);
+    Player human;
+    human.level = 59;
+    ObjectAccessor::players[1] = &human;
+    hooks.OnPlayerLogin(&human);
+    CHECK(human.fields[PLAYER_FIELD_MAX_LEVEL] == 60);
+    for (uint8 source = 0; source < 6; ++source)
+    {
+        uint32 xp = 42;
+        hooks.OnPlayerGiveXP(&human, xp, nullptr, source);
+        CHECK(xp == 42);
+    }
+    human.fields[PLAYER_XP] = 90;
+    AwardXP(human, hooks, 5000, 10000); // huge award + RaF/rested bonus
+    CHECK(human.level == 60);
+    hooks.OnPlayerUpdate(&human, 1);
+    CHECK(human.fields[PLAYER_XP] == 0);
+    for (uint8 source = 0; source < 6; ++source)
+    {
+        uint32 xp = 42;
+        hooks.OnPlayerGiveXP(&human, xp, nullptr, source);
+        CHECK(xp == 0);
+    }
+    AwardXP(human, hooks, 5000); // direct XP call also cannot level
+    CHECK(human.level == 60 && human.fields[PLAYER_XP] == 0);
+    CHECK(!hooks.OnPlayerCanGiveLevel(&human, 61));
+    CHECK(!hooks.OnPlayerCanGiveLevel(&human, 80));
+    human.fields[PLAYER_XP] = 123;
+    hooks.OnPlayerSave(&human);
+    CHECK(human.fields[PLAYER_XP] == 0);
+
+    Player bot; // session-less bot still receives all protections
+    bot.level = 60;
+    bot.fields[PLAYER_XP] = 9000;
+    ObjectAccessor::players[2] = &bot;
+    human.fields[PLAYER_XP] = 9000;
+    CHECK(ProgressionCommandScript::HandleCap(&gm, 70));
+    CHECK(world.configs[CONFIG_MAX_PLAYER_LEVEL] == 70);
+    CHECK(bot.fields[PLAYER_XP] == 0 && human.fields[PLAYER_XP] == 0);
+    CHECK(bot.fields[PLAYER_FIELD_MAX_LEVEL] == 70);
+    AwardXP(human, hooks, 100);
+    CHECK(human.level == 61);
+    CHECK(ProgressionCommandScript::HandleCap(&gm, 60));
+    CHECK(human.level == 61); // no destructive demotion
+    CHECK(!hooks.OnPlayerCanGiveLevel(&human, 62));
+    CHECK(hooks.OnPlayerCanGiveLevel(&human, 60));
+    CHECK(!ProgressionCommandScript::HandleCap(&gm, 0));
+    CHECK(!ProgressionCommandScript::HandleCap(&gm, 81));
+    CHECK(!ProgressionCommandScript::HandleCap(&gm, std::numeric_limits<uint32>::max()));
+    CHECK(state.cap == 60);
+
+    CHECK(ProgressionCommandScript::HandleCap(&gm, 1));
+    CHECK(world.configs[CONFIG_START_PLAYER_LEVEL] == 1);
+    CHECK(world.configs[CONFIG_START_HEROIC_PLAYER_LEVEL] == 1);
+    CHECK(world.configs[CONFIG_START_GM_LEVEL] == 1);
+    CHECK(ProgressionCommandScript::HandleCap(&gm, 80));
+    CHECK(world.configs[CONFIG_START_HEROIC_PLAYER_LEVEL] == 55);
+    CHECK(world.configs[CONFIG_START_GM_LEVEL] == 80);
+
+    // Model core reload: restore non-reloadable maximum, load starting levels,
+    // then apply module config. Runtime command override is intentionally lost.
+    realm.OnBeforeConfigLoad(true);
+    CHECK(world.configs[CONFIG_MAX_PLAYER_LEVEL] == 80);
+    world.configs[CONFIG_START_PLAYER_LEVEL] = 1;
+    world.configs[CONFIG_START_HEROIC_PLAYER_LEVEL] = 55;
+    world.configs[CONFIG_START_GM_LEVEL] = 80;
+    realm.OnAfterConfigLoad(true);
+    CHECK(state.cap == 60 && world.configs[CONFIG_MAX_PLAYER_LEVEL] == 60);
+    config.options["Progression.Enable"] = 0;
+    human.fields[PLAYER_XP] = 500;
+    realm.OnBeforeConfigLoad(true);
+    world.configs[CONFIG_START_GM_LEVEL] = 80;
+    realm.OnAfterConfigLoad(true);
+    CHECK(!state.enabled && world.configs[CONFIG_MAX_PLAYER_LEVEL] == 80);
+    CHECK(human.fields[PLAYER_XP] == 0);
+    CHECK(human.fields[PLAYER_FIELD_MAX_LEVEL] == 80);
+    CHECK(hooks.OnPlayerCanGiveLevel(&human, 80));
+    CHECK(!ProgressionCommandScript::HandleCap(&gm, 70));
+    uint32 xp = 50;
+    hooks.OnPlayerGiveXP(&human, xp, nullptr, 0);
+    CHECK(xp == 50);
+
+    config.options["Progression.Enable"] = 1;
+    config.options["Progression.LevelCap"] = -1;
+    realm.OnBeforeConfigLoad(true);
+    realm.OnAfterConfigLoad(true);
+    CHECK(state.cap == 60);
+    state = ProgressionState{};
+    world.configs[CONFIG_MAX_PLAYER_LEVEL] = 40;
+    realm.OnAfterConfigLoad(false);
+    CHECK(state.cap == 40 && state.coreMaximum == 40);
+    CHECK(!ProgressionCommandScript::HandleCap(&gm, 41));
+    CHECK(ProgressionCommandScript::HandleStatus(&gm));
+    CHECK(gm.lastMessage.find("40") != std::string::npos);
+    std::cout << checks << " progression behavior checks passed\n";
+}

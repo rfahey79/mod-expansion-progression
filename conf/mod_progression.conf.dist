@@ -1,0 +1,17 @@
+# mod-progression v1
+# Copy to your server's etc/modules/mod_progression.conf.
+# Keep Expansion = 2 and MaxPlayerLevel = 80 in worldserver.conf.
+# This module overrides only the runtime maximum, not expansion/race/class rules.
+
+Progression.Enable = 1
+
+# Allowed: 1..min(80, worldserver's original MaxPlayerLevel).
+# Invalid values log an error and fall back to min(60, original MaxPlayerLevel).
+# Suggested progression: 60 -> 70 -> 80.
+Progression.LevelCap = 60
+
+Progression.AnnounceOnLogin = 1
+
+# .progression cap changes the live value only. Edit this file to persist it.
+# .reload config re-reads these values and discards any live command override.
+# Applies equally to human and bot Player objects; no Playerbots dependency.

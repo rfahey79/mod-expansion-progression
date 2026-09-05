@@ -1,0 +1,102 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Test doubles, NOT a replacement for compiling against real core headers.
+#pragma once
+#include <cstdint>
+#include <map>
+#include <shared_mutex>
+#include <string>
+#include <vector>
+using uint8 = std::uint8_t;
+using uint16 = std::uint16_t;
+using uint32 = std::uint32_t;
+using int32 = std::int32_t;
+enum { CONFIG_MAX_PLAYER_LEVEL, CONFIG_START_PLAYER_LEVEL, CONFIG_START_HEROIC_PLAYER_LEVEL, CONFIG_START_GM_LEVEL };
+enum { PLAYER_XP, PLAYER_FIELD_MAX_LEVEL };
+enum { WORLDHOOK_ON_BEFORE_CONFIG_LOAD, WORLDHOOK_ON_AFTER_CONFIG_LOAD };
+enum { PLAYERHOOK_ON_LOGIN, PLAYERHOOK_ON_GIVE_EXP, PLAYERHOOK_ON_CAN_GIVE_LEVEL,
+       PLAYERHOOK_ON_SET_MAX_LEVEL, PLAYERHOOK_ON_UPDATE, PLAYERHOOK_ON_SAVE };
+constexpr uint32 SEC_GAMEMASTER = 2;
+class Unit {};
+struct Session {};
+struct Player
+{
+    uint32 level = 1;
+    uint32 fields[2] = {0, 80};
+    Session* session = nullptr;
+    uint32 GetLevel() const { return level; }
+    uint32 GetUInt32Value(uint32 field) const { return fields[field]; }
+    void SetUInt32Value(uint32 field, uint32 value) { fields[field] = value; }
+    Session* GetSession() { return session; }
+};
+struct World
+{
+    uint32 configs[4] = {80, 1, 55, 80};
+    uint32 getIntConfig(uint32 index) { return configs[index]; }
+    void setIntConfig(uint32 index, uint32 value) { configs[index] = value; }
+};
+inline World world;
+inline World* sWorld = &world;
+struct Config
+{
+    std::map<std::string, int32> options;
+    template<class T> T GetOption(std::string const& key, T fallback)
+    {
+        auto it = options.find(key);
+        return it == options.end() ? fallback : static_cast<T>(it->second);
+    }
+};
+inline Config config;
+inline Config* sConfigMgr = &config;
+template<class T> struct HashMapHolder
+{
+    static std::shared_mutex* GetLock() { static std::shared_mutex mutex; return &mutex; }
+};
+namespace ObjectAccessor
+{
+inline std::map<uint32, Player*> players;
+inline auto const& GetPlayers() { return players; }
+}
+struct ChatHandler
+{
+    explicit ChatHandler(Session* = nullptr) {}
+    std::string lastMessage;
+    bool error = false;
+    void SendSysMessage(char const* message) { lastMessage = message; }
+    void SetSentErrorMessage(bool value) { error = value; }
+};
+namespace Acore::ChatCommands
+{
+enum class Console { Yes, No };
+struct ChatCommandBuilder
+{
+    template<class T> ChatCommandBuilder(char const*, T, uint32, Console) {}
+    ChatCommandBuilder(char const*, std::vector<ChatCommandBuilder> const&) {}
+};
+using ChatCommandTable = std::vector<ChatCommandBuilder>;
+}
+struct CommandScript
+{
+    explicit CommandScript(char const*) {}
+    virtual ~CommandScript() = default;
+    virtual Acore::ChatCommands::ChatCommandTable GetCommands() const = 0;
+};
+struct WorldScript
+{
+    WorldScript(char const*, std::vector<uint16>) {}
+    virtual ~WorldScript() = default;
+    virtual void OnBeforeConfigLoad(bool) {}
+    virtual void OnAfterConfigLoad(bool) {}
+};
+struct PlayerScript
+{
+    PlayerScript(char const*, std::vector<uint16>) {}
+    virtual ~PlayerScript() = default;
+    virtual void OnPlayerGiveXP(Player*, uint32&, Unit*, uint8) {}
+    virtual bool OnPlayerCanGiveLevel(Player*, uint8) { return true; }
+    virtual void OnPlayerSetMaxLevel(Player*, uint32&) {}
+    virtual void OnPlayerLogin(Player*) {}
+    virtual void OnPlayerUpdate(Player*, uint32) {}
+    virtual void OnPlayerSave(Player*) {}
+};
+#define LOG_INFO(...) do {} while (false)
+#define LOG_ERROR(...) do {} while (false)
