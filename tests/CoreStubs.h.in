@@ -12,18 +12,21 @@ using uint32 = std::uint32_t;
 using int32 = std::int32_t;
 enum { CONFIG_MAX_PLAYER_LEVEL, CONFIG_START_PLAYER_LEVEL, CONFIG_START_HEROIC_PLAYER_LEVEL, CONFIG_START_GM_LEVEL };
 enum { PLAYER_XP, PLAYER_FIELD_MAX_LEVEL };
-enum { WORLDHOOK_ON_BEFORE_CONFIG_LOAD, WORLDHOOK_ON_AFTER_CONFIG_LOAD };
+enum { WORLDHOOK_ON_BEFORE_CONFIG_LOAD, WORLDHOOK_ON_AFTER_CONFIG_LOAD, WORLDHOOK_ON_STARTUP };
 enum { PLAYERHOOK_ON_LOGIN, PLAYERHOOK_ON_GIVE_EXP, PLAYERHOOK_ON_CAN_GIVE_LEVEL,
        PLAYERHOOK_ON_SET_MAX_LEVEL, PLAYERHOOK_ON_UPDATE, PLAYERHOOK_ON_SAVE };
 constexpr uint32 SEC_GAMEMASTER = 2;
+constexpr uint8 CLASS_DEATH_KNIGHT = 6;
 class Unit {};
 struct Session {};
 struct Player
 {
     uint32 level = 1;
+    uint8 playerClass = 1;
     uint32 fields[2] = {0, 80};
     Session* session = nullptr;
     uint32 GetLevel() const { return level; }
+    uint8 getClass() const { return playerClass; }
     uint32 GetUInt32Value(uint32 field) const { return fields[field]; }
     void SetUInt32Value(uint32 field, uint32 value) { fields[field] = value; }
     Session* GetSession() { return session; }
@@ -86,6 +89,7 @@ struct WorldScript
     virtual ~WorldScript() = default;
     virtual void OnBeforeConfigLoad(bool) {}
     virtual void OnAfterConfigLoad(bool) {}
+    virtual void OnStartup() {}
 };
 struct PlayerScript
 {

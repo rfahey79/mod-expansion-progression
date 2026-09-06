@@ -19,7 +19,8 @@ The module supports either directory name, `mod-progression` or
   the next phase. The client can briefly see the remainder before the next tick.
 - `Player::GiveLevel` requests above the cap are rejected, including GM grants
   and bot paths using that API. GMs have no leveling bypass.
-- New characters' normal, heroic and GM starting levels are clamped to the cap.
+- New normal and GM characters start no higher than the cap. Stock Death Knights
+  retain their required level-55 minimum when the configured cap is lower.
 - Existing characters/bots above a lowered cap are **not demoted**. They cannot
   gain XP or advance further; administrative downward level changes are allowed.
 - Online players receive the new maximum immediately; raising the cap requires
@@ -73,13 +74,13 @@ access normally required by your server; this module does not change account fla
 
 | Command | Behavior |
 | --- | --- |
-| `.progression status` | Show enable state, progression cap, runtime maximum and original maximum. |
+| `.progression status` | Show enable state, progression cap and core maximum. |
 | `.progression cap 60` | Apply level 60 immediately to the realm. |
 | `.progression cap 70` | Open leveling through 70. |
 | `.progression cap 80` | Open leveling through 80. |
 | `.progression clamp preview Name` | Show the changes required to normalize an online character. |
-| `.progression clamp Name` | Normalize one online character to the current cap. With no name, use the selected character or yourself. |
-| `.progression clamp all` | Normalize every currently online character and bot above the cap. |
+| `.progression clamp Name` | Normalize one online character to the current safe target. With no name, use the selected character or yourself. |
+| `.progression clamp all` | Normalize every currently online character and bot above its safe target. |
 
 Omit the leading dot in the server console. Allowed caps are
 `1..min(80, original MaxPlayerLevel)`. Invalid commands leave the cap unchanged.
@@ -101,7 +102,8 @@ The module respects the original core maximum; it cannot raise past it.
 There are no Playerbots headers, libraries or runtime detection requirements.
 Bots represented by `Player` use the same XP/level hooks. The inspected
 `mod-playerbots` random-level selection also clamps to
-`CONFIG_MAX_PLAYER_LEVEL`, which this module updates.
+the effective `CONFIG_MAX_PLAYER_LEVEL`, which follows the phase cap with a
+level-55 safety floor for the stock Death Knight data.
 
 For your initial level-60 VM, also align the bot configuration:
 
@@ -133,9 +135,9 @@ phase:
 .progression clamp Arthas
 ```
 
-Clamping lowers the character to the active cap, clears XP, resets both talent
-specs and pet talents, removes higher-level spells belonging to the character's
-class spell family, and unequips items whose `RequiredLevel` exceeds the cap.
+Clamping lowers the character to its safe target, clears XP, resets both talent
+specs and pet talents, removes class spells above that target, and unequips items
+whose `RequiredLevel` exceeds it.
 Equipment is placed in ordinary bags when possible. Overflow is returned through
 mail in groups of at most 12 attachments, preserving the original item instances,
 enchants, gems, durability and ownership.
@@ -144,6 +146,10 @@ The spell filter deliberately leaves racials, professions, mounts, companions,
 quest rewards and other generic spells alone. It removes high-level ranks as a
 complete chain and then relearns the highest rank in that chain that the character
 already knew and can use at the cap.
+
+For a Death Knight and a cap below 55, the safe clamp target is 55. This prevents
+the character from being written at a level for which stock AzerothCore has no
+Death Knight base stats.
 
 To apply the same normalization when an offline character next logs in, set:
 
@@ -165,27 +171,27 @@ entry if you add one.
 
 ## Implementation and boundaries
 
-The world script overrides the runtime `CONFIG_MAX_PLAYER_LEVEL` and clamps
-starting-level settings. It restores the original maximum before core config
-reload validation and reapplies the selected progression cap afterward.
+The world script keeps `CONFIG_MAX_PLAYER_LEVEL` at the original core maximum
+until AzerothCore loads complete level-stat and XP arrays. After startup, the
+effective core maximum follows the phase cap with a level-55 Death Knight safety
+floor. Player hooks enforce lower caps for ordinary characters and block Death
+Knights from advancing while that floor is active.
 It does not edit `worldserver.conf`, `Expansion`, account data or core source.
 Player hooks veto XP and upward `GiveLevel` calls, expose the cap to the client,
 announce it and clear capped XP. Live transitions synchronize registered Player
 objects, including bots, through `ObjectAccessor` under its container lock.
 
-Using the core runtime maximum is intentional: the `GiveXP` loop applies bonuses
-and may award multiple levels; an XP-source hook or level veto alone does not
-provide equivalent behavior. Other core systems that consult MaxPlayerLevel
-(including capped quest XP-to-money conversion) also see this maximum.
-Do not combine with another module that owns or overwrites MaxPlayerLevel.
+XP-source hooks discard awards at the cap, the level hook rejects upward changes,
+and the next update clears any remainder produced by a direct `GiveXP` caller.
+Loading all data at the configured maximum makes later live phase changes safe.
 Trial-account restrictions, voluntary XP locks and other core restrictions may
 still impose a lower limit; the module does not clear those flags.
 
 This is a leveling progression module, not a content phase system. It does not
 gate raids, Outland/Northrend access, items, professions, talents, Death Knights,
 or achievements, and it does not detect raid completion. Wrath gameplay rules
-remain active. Caps below the normal Death Knight starting level are supported
-as level limits, but their starting content is not redesigned for those levels.
+remain active. AzerothCore has no stock Death Knight stats below level 55, so a
+cap below 55 leaves Death Knights at level 55 and blocks further advancement.
 
 ## Validation
 

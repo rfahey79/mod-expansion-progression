@@ -18,8 +18,13 @@ static void AwardXP(Player& player, ProgressionPlayerScript& script, uint32 xp, 
     while (remainder >= 100 && player.level < world.configs[CONFIG_MAX_PLAYER_LEVEL])
     {
         remainder -= 100;
-        CHECK(script.OnPlayerCanGiveLevel(&player, static_cast<uint8>(player.level + 1)));
-        ++player.level;
+        if (script.OnPlayerCanGiveLevel(&player, static_cast<uint8>(player.level + 1)))
+            ++player.level;
+        else
+        {
+            remainder = 0;
+            break;
+        }
     }
     player.fields[PLAYER_XP] = remainder;
 }
@@ -31,6 +36,10 @@ int main()
     ChatHandler gm;
     realm.OnAfterConfigLoad(false);
     CHECK(state.enabled && state.cap == 60);
+    // Initial config loading must retain the full core maximum until ObjectMgr
+    // has allocated and populated every level-data array.
+    CHECK(world.configs[CONFIG_MAX_PLAYER_LEVEL] == 80);
+    realm.OnStartup();
     CHECK(world.configs[CONFIG_MAX_PLAYER_LEVEL] == 60);
     CHECK(world.configs[CONFIG_START_GM_LEVEL] == 60);
     CHECK(world.configs[CONFIG_START_HEROIC_PLAYER_LEVEL] == 55);
@@ -85,9 +94,15 @@ int main()
     CHECK(state.cap == 60);
 
     CHECK(ProgressionCommandScript::HandleCap(&gm, 1));
+    CHECK(world.configs[CONFIG_MAX_PLAYER_LEVEL] == 55);
     CHECK(world.configs[CONFIG_START_PLAYER_LEVEL] == 1);
-    CHECK(world.configs[CONFIG_START_HEROIC_PLAYER_LEVEL] == 1);
+    CHECK(world.configs[CONFIG_START_HEROIC_PLAYER_LEVEL] == 55);
     CHECK(world.configs[CONFIG_START_GM_LEVEL] == 1);
+    Player deathKnight;
+    deathKnight.playerClass = CLASS_DEATH_KNIGHT;
+    deathKnight.level = 60;
+    CHECK(!hooks.OnPlayerCanGiveLevel(&deathKnight, 25));
+    CHECK(hooks.OnPlayerCanGiveLevel(&deathKnight, 55));
     CHECK(ProgressionCommandScript::HandleCap(&gm, 80));
     CHECK(world.configs[CONFIG_START_HEROIC_PLAYER_LEVEL] == 55);
     CHECK(world.configs[CONFIG_START_GM_LEVEL] == 80);

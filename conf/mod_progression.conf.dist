@@ -1,13 +1,16 @@
 # mod-progression v1
 # Copy to your server's etc/modules/mod_progression.conf.
 # Keep Expansion = 2 and MaxPlayerLevel = 80 in worldserver.conf.
-# This module overrides only the runtime maximum, not expansion/race/class rules.
+# The module leaves the core maximum at 80 and enforces the progression cap
+# through player hooks. It does not change expansion/race/class availability.
 
 Progression.Enable = 1
 
 # Allowed: 1..min(80, worldserver's original MaxPlayerLevel).
 # Invalid values log an error and fall back to min(60, original MaxPlayerLevel).
 # Suggested progression: 60 -> 70 -> 80.
+# Stock Death Knights cannot exist below level 55. With a lower testing cap,
+# they remain at level 55 but cannot gain XP or advance.
 Progression.LevelCap = 60
 
 Progression.AnnounceOnLogin = 1

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "ProgressionPolicy.h"
 #include "ProgressionRuntime.h"
 
 #include "Chat.h"
@@ -58,6 +59,12 @@ struct ClampPreview
     std::vector<uint32> spells;
     std::vector<std::string> items;
 };
+
+uint32 ClampTarget(Player const* player, uint32 cap)
+{
+    return player && player->getClass() == CLASS_DEATH_KNIGHT
+        ? std::max(cap, Progression::DeathKnightMinimumLevel) : cap;
+}
 
 std::string Trim(std::string_view value)
 {
@@ -139,11 +146,12 @@ ClampPreview BuildPreview(Player* player, uint32 cap)
 {
     ClampPreview preview;
     preview.oldLevel = player->GetLevel();
-    preview.targetLevel = std::min(preview.oldLevel, cap);
+    uint32 const target = ClampTarget(player, cap);
+    preview.targetLevel = std::min(preview.oldLevel, target);
     if (config.removeSpells)
-        preview.spells = FindHighLevelClassSpells(player, cap);
+        preview.spells = FindHighLevelClassSpells(player, target);
     if (config.unequipGear)
-        for (uint8 slot : FindHighLevelEquipment(player, cap))
+        for (uint8 slot : FindHighLevelEquipment(player, target))
             if (Item* item = player->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
                 preview.items.push_back(item->GetTemplate()->Name1);
     return preview;
@@ -266,10 +274,11 @@ std::size_t StoreOrMailHighLevelEquipment(Player* player, uint32 cap, std::size_
 
 bool ClampPlayer(Player* player, uint32 cap, ChatHandler* feedback)
 {
-    if (!player || player->GetLevel() <= cap)
+    uint32 const target = ClampTarget(player, cap);
+    if (!player || player->GetLevel() <= target)
     {
         if (feedback && player)
-            feedback->SendSysMessage(("[Progression] " + player->GetName() + " is already at or below level " + std::to_string(cap) + ".").c_str());
+            feedback->SendSysMessage(("[Progression] " + player->GetName() + " is already at or below its safe clamp level " + std::to_string(target) + ".").c_str());
         return false;
     }
 
@@ -287,12 +296,12 @@ bool ClampPlayer(Player* player, uint32 cap, ChatHandler* feedback)
     std::lock_guard<std::mutex> clampLock(clampMutex);
 
     uint32 const oldLevel = player->GetLevel();
-    player->GiveLevel(static_cast<uint8>(cap));
-    if (player->GetLevel() != cap)
+    player->GiveLevel(static_cast<uint8>(target));
+    if (player->GetLevel() != target)
     {
         if (feedback)
         {
-            feedback->SendSysMessage(("[Progression] Could not lower " + player->GetName() + " to level " + std::to_string(cap) + "; no normalization changes were made.").c_str());
+            feedback->SendSysMessage(("[Progression] Could not lower " + player->GetName() + " to level " + std::to_string(target) + "; no normalization changes were made.").c_str());
             feedback->SetSentErrorMessage(true);
         }
         return false;
@@ -301,17 +310,17 @@ bool ClampPlayer(Player* player, uint32 cap, ChatHandler* feedback)
 
     if (config.resetTalents)
         ResetAllTalentSpecs(player);
-    std::size_t const removedSpells = config.removeSpells ? RemoveHighLevelClassSpells(player, cap) : 0;
+    std::size_t const removedSpells = config.removeSpells ? RemoveHighLevelClassSpells(player, target) : 0;
     std::size_t mailed = 0;
     std::size_t skipped = 0;
-    std::size_t const bagged = config.unequipGear ? StoreOrMailHighLevelEquipment(player, cap, mailed, skipped) : 0;
+    std::size_t const bagged = config.unequipGear ? StoreOrMailHighLevelEquipment(player, target, mailed, skipped) : 0;
 
     player->UpdateAllStats();
     player->SetFullHealth();
     player->SaveToDB(false, false);
 
     std::ostringstream message;
-    message << "[Progression] Clamped " << player->GetName() << " from level " << oldLevel << " to " << cap
+    message << "[Progression] Clamped " << player->GetName() << " from level " << oldLevel << " to " << target
         << "; removed " << removedSpells << " high-level class spells; moved " << bagged
         << " equipped items to bags; mailed " << mailed << ".";
     if (skipped)
@@ -365,7 +374,7 @@ public:
             std::lock_guard<std::mutex> clampLock(clampMutex);
             automatic = config.automatic;
         }
-        if (automatic && ProgressionRuntime::IsEnabled() && player->GetLevel() > ProgressionRuntime::GetCap())
+        if (automatic && ProgressionRuntime::IsEnabled() && player->GetLevel() > ClampTarget(player, ProgressionRuntime::GetCap()))
         {
             std::lock_guard<std::mutex> pendingLock(pendingMutex);
             pendingAutomaticClamps.insert(player->GetGUID().GetCounter());
@@ -386,7 +395,7 @@ public:
             std::lock_guard<std::mutex> clampLock(clampMutex);
             automatic = config.automatic;
         }
-        if (automatic && ProgressionRuntime::IsEnabled() && player->GetLevel() > ProgressionRuntime::GetCap())
+        if (automatic && ProgressionRuntime::IsEnabled() && player->GetLevel() > ClampTarget(player, ProgressionRuntime::GetCap()))
             ClampPlayer(player, ProgressionRuntime::GetCap(), nullptr);
     }
 };
@@ -435,7 +444,7 @@ public:
             std::size_t clamped = 0;
             for (ObjectGuid const& guid : players)
                 if (Player* player = ObjectAccessor::FindPlayer(guid))
-                    if (player->GetLevel() > ProgressionRuntime::GetCap() && ClampPlayer(player, ProgressionRuntime::GetCap(), nullptr))
+                    if (player->GetLevel() > ClampTarget(player, ProgressionRuntime::GetCap()) && ClampPlayer(player, ProgressionRuntime::GetCap(), nullptr))
                         ++clamped;
             handler->SendSysMessage(("[Progression] Clamped " + std::to_string(clamped) + " online characters/bots. Offline characters are handled at login when Progression.ClampExistingCharacters = 1.").c_str());
             return true;

@@ -19,6 +19,7 @@ namespace
 struct ProgressionState
 {
     bool initialized = false;
+    bool startupComplete = false;
     bool enabled = false;
     bool announce = true;
     uint32 coreMaximum = Progression::ClientMaximum;
@@ -40,7 +41,7 @@ void SyncPlayer(Player* player)
 {
     ClearCappedXP(player, state.enabled, state.cap);
     player->SetUInt32Value(PLAYER_FIELD_MAX_LEVEL,
-        state.enabled ? state.cap : state.coreMaximum);
+        state.enabled ? std::max(state.cap, static_cast<uint32>(player->GetLevel())) : state.coreMaximum);
 }
 
 // Called from config/command processing on the world thread, outside map updates.
@@ -59,15 +60,19 @@ void ApplyToOnlinePlayers(bool previouslyEnabled, uint32 previousCap)
 
 void ApplyRuntimeMaximum()
 {
-    // GiveXP uses this maximum inside its multi-level loop, AFTER rested/RaF
-    // bonuses. Merely vetoing GiveLevel or filtering source XP is insufficient.
-    sWorld->setIntConfig(CONFIG_MAX_PLAYER_LEVEL,
-        state.enabled ? state.cap : state.coreMaximum);
+    // ObjectMgr must first load and allocate the complete configured level-data
+    // arrays. After startup it is safe to expose the phase maximum to core
+    // systems, but never below the stock Death Knight data floor.
+    uint32 const runtimeMaximum = state.startupComplete && state.enabled
+        ? std::min(state.coreMaximum, std::max(state.cap, Progression::DeathKnightMinimumLevel))
+        : state.coreMaximum;
+    sWorld->setIntConfig(CONFIG_MAX_PLAYER_LEVEL, runtimeMaximum);
     // Character creation writes its starting level directly (without GiveLevel).
     sWorld->setIntConfig(CONFIG_START_PLAYER_LEVEL,
         state.enabled ? std::min(state.startPlayer, state.cap) : state.startPlayer);
     sWorld->setIntConfig(CONFIG_START_HEROIC_PLAYER_LEVEL,
-        state.enabled ? std::min(state.startHeroic, state.cap) : state.startHeroic);
+        state.enabled && state.cap >= Progression::DeathKnightMinimumLevel
+            ? std::min(state.startHeroic, state.cap) : state.startHeroic);
     sWorld->setIntConfig(CONFIG_START_GM_LEVEL,
         state.enabled ? std::min(state.startGM, state.cap) : state.startGM);
 }
@@ -76,7 +81,16 @@ class ProgressionWorldScript final : public WorldScript
 {
 public:
     ProgressionWorldScript() : WorldScript("ProgressionWorldScript",
-        { WORLDHOOK_ON_BEFORE_CONFIG_LOAD, WORLDHOOK_ON_AFTER_CONFIG_LOAD }) { }
+        { WORLDHOOK_ON_BEFORE_CONFIG_LOAD, WORLDHOOK_ON_AFTER_CONFIG_LOAD,
+          WORLDHOOK_ON_STARTUP }) { }
+
+    void OnStartup() override
+    {
+        state.startupComplete = true;
+        ApplyRuntimeMaximum();
+        LOG_INFO("module", "mod-progression: startup complete; effective MaxPlayerLevel={}.",
+            sWorld->getIntConfig(CONFIG_MAX_PLAYER_LEVEL));
+    }
 
     void OnBeforeConfigLoad(bool reload) override
     {
@@ -133,13 +147,15 @@ public:
 
     bool OnPlayerCanGiveLevel(Player* player, uint8 newLevel) override
     {
-        return Progression::CanGiveLevel(state.enabled, state.cap, player->GetLevel(), newLevel);
+        uint32 const minimum = player->getClass() == CLASS_DEATH_KNIGHT
+            ? Progression::DeathKnightMinimumLevel : 1;
+        return Progression::CanGiveLevel(state.enabled, state.cap, player->GetLevel(), newLevel, minimum);
     }
 
-    void OnPlayerSetMaxLevel(Player*, uint32& maximum) override
+    void OnPlayerSetMaxLevel(Player* player, uint32& maximum) override
     {
         if (state.enabled)
-            maximum = std::min(maximum, state.cap);
+            maximum = std::min(maximum, std::max(state.cap, static_cast<uint32>(player->GetLevel())));
     }
 
     void OnPlayerLogin(Player* player) override
