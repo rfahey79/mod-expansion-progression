@@ -77,6 +77,9 @@ access normally required by your server; this module does not change account fla
 | `.progression cap 60` | Apply level 60 immediately to the realm. |
 | `.progression cap 70` | Open leveling through 70. |
 | `.progression cap 80` | Open leveling through 80. |
+| `.progression clamp preview Name` | Show the changes required to normalize an online character. |
+| `.progression clamp Name` | Normalize one online character to the current cap. With no name, use the selected character or yourself. |
+| `.progression clamp all` | Normalize every currently online character and bot above the cap. |
 
 Omit the leading dot in the server console. Allowed caps are
 `1..min(80, original MaxPlayerLevel)`. Invalid commands leave the cap unchanged.
@@ -118,6 +121,47 @@ Direct SQL edits or third-party code calling `SetLevel`/writing level fields
 instead of `GiveLevel` can bypass script hooks. No dependency-free module can
 intercept arbitrary direct writes. This module does not claim compatibility
 with every bot fork or module that rewrites the same maximum.
+
+## Existing-character clamp
+
+The hard cap preserves existing characters above it by default. A GM can inspect
+and deliberately normalize an online character before bringing it into an earlier
+phase:
+
+```text
+.progression clamp preview Arthas
+.progression clamp Arthas
+```
+
+Clamping lowers the character to the active cap, clears XP, resets both talent
+specs and pet talents, removes higher-level spells belonging to the character's
+class spell family, and unequips items whose `RequiredLevel` exceeds the cap.
+Equipment is placed in ordinary bags when possible. Overflow is returned through
+mail in groups of at most 12 attachments, preserving the original item instances,
+enchants, gems, durability and ownership.
+
+The spell filter deliberately leaves racials, professions, mounts, companions,
+quest rewards and other generic spells alone. It removes high-level ranks as a
+complete chain and then relearns the highest rank in that chain that the character
+already knew and can use at the cap.
+
+To apply the same normalization when an offline character next logs in, set:
+
+```ini
+Progression.ClampExistingCharacters = 1
+```
+
+The default remains `0` because lowering levels, resetting talents, removing
+spells and moving equipment are intentional character changes. `clamp all`
+affects the online roster only; the login setting handles the rest over time.
+Playerbots in `ObjectAccessor` follow the same path without a Playerbots compile
+dependency.
+
+The default overflow letter is delivered by AzerothCore's existing Postmaster
+creature entry and signed "Keepers of the Realm." The subject, body, signature and
+sender creature entry are configurable. A custom visible sender name requires a
+matching `creature_template` entry; set `Progression.Mail.SenderEntry` to that
+entry if you add one.
 
 ## Implementation and boundaries
 
@@ -177,6 +221,11 @@ checks do **not** substitute for a live worldserver/database/client test.
    advancement stops. Test a logged-in bot and a newly generated random bot.
 6. Test invalid/missing/extra arguments; confirm status is unchanged. Test config
    reload, restart persistence and disabling the module as described above.
+7. With an expendable character above the cap, equip an over-level item and fill
+   its bags. Run `.progression clamp preview Name`, then `.progression clamp Name`.
+   Verify level/XP, both talent specs, class spell ranks, bag placement and mailed
+   overflow. Repeat with an online bot, then enable login clamping and test an
+   offline character on its next login.
 
 ## Source references
 

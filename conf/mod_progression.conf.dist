@@ -15,3 +15,19 @@ Progression.AnnounceOnLogin = 1
 # .progression cap changes the live value only. Edit this file to persist it.
 # .reload config re-reads these values and discards any live command override.
 # Applies equally to human and bot Player objects; no Playerbots dependency.
+
+# Existing characters above the cap are preserved by default. Set this to 1 to
+# normalize them when they log in. GMs may always use .progression clamp.
+Progression.ClampExistingCharacters = 0
+
+Progression.Clamp.ResetTalents = 1
+Progression.Clamp.RemoveHighLevelSpells = 1
+Progression.Clamp.UnequipHighLevelGear = 1
+Progression.Clamp.MailOverflowGear = 1
+
+# Overflow equipment is mailed by this existing world creature entry. The stock
+# value is The Postmaster. SenderName is used for the letter's RP signature.
+Progression.Mail.SenderEntry = 34337
+Progression.Mail.SenderName = "Keepers of the Realm"
+Progression.Mail.Subject = "The Call of an Earlier Age"
+Progression.Mail.Body = "Adventurer,$B$BThe realm has been drawn back to an earlier age, and some of the equipment you carried belongs to battles yet to come.$B$BThese items have been returned to you for safekeeping. They are yours still, but their time has not yet arrived.$B$BWhen the realm advances, you may reclaim their full use.$B$BUntil then, steel yourself for the trials that lie before you.$B$B-- {sender}"

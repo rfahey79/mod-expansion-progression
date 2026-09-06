@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "ProgressionPolicy.h"
+#include "ProgressionRuntime.h"
 #include "Chat.h"
 #include "CommandScript.h"
 #include "Config.h"
@@ -230,4 +231,14 @@ void AddProgressionScripts()
     new ProgressionWorldScript();
     new ProgressionPlayerScript();
     new ProgressionCommandScript();
+}
+
+bool ProgressionRuntime::IsEnabled()
+{
+    return state.enabled;
+}
+
+std::uint32_t ProgressionRuntime::GetCap()
+{
+    return state.cap;
 }

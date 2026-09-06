@@ -20,7 +20,7 @@ jobs:
       matrix:
         include:
           - repository: azerothcore/azerothcore-wotlk
-            ref: 70dda745ba9e9e2ed96f8b4b1be10bb98e5ca9c3
+            ref: 3d21cd3e9d3a2340224f91cbb1d16dea61518581
             name: upstream
           - repository: mod-playerbots/azerothcore-wotlk
             ref: 413bea61a85e20d9caef7d66fc601a661fdddd9d
