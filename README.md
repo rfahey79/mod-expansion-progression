@@ -157,9 +157,11 @@ To apply the same normalization when an offline character next logs in, set:
 Progression.ClampExistingCharacters = 1
 ```
 
-The default remains `0` because lowering levels, resetting talents, removing
-spells and moving equipment are intentional character changes. `clamp all`
-affects the online roster only; the login setting handles the rest over time.
+After an automatic login clamp, the character receives the result summary and a
+separate notice that their talents and pet talents were reset. The default
+remains `0` because lowering levels, resetting talents, removing spells and
+moving equipment are intentional character changes. `clamp all` affects the
+online roster only; the login setting handles the rest over time.
 Playerbots in `ObjectAccessor` follow the same path without a Playerbots compile
 dependency.
 

@@ -329,6 +329,9 @@ bool ClampPlayer(Player* player, uint32 cap, ChatHandler* feedback)
         feedback->SendSysMessage(message.str().c_str());
     if (player->GetSession() && (!feedback || feedback->GetSession() != player->GetSession()))
         ChatHandler(player->GetSession()).SendSysMessage(message.str().c_str());
+    if (config.resetTalents && player->GetSession())
+        ChatHandler(player->GetSession()).SendSysMessage(
+            "[Progression] Your talents and pet talents have been reset. Please spend your talent points again.");
     LOG_INFO("module", "{}", message.str());
     return true;
 }
