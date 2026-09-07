@@ -25,8 +25,9 @@ The module supports either directory name, `mod-progression` or
   gain XP or advance further; administrative downward level changes are allowed.
 - Online players receive the new maximum immediately; raising the cap requires
   no relog. A login message announces the active cap.
-- No SQL is required. Commands use security level `SEC_GAMEMASTER` (2 or higher)
-  and support the server console. Existing command security overrides still apply.
+- The included world update adds one custom lootable starter-cache item. Commands
+  use security level `SEC_GAMEMASTER` (2 or higher) and support the server console.
+  Existing command security overrides still apply.
 
 ## Install on your VM
 
@@ -141,6 +142,19 @@ whose `RequiredLevel` exceeds it.
 Equipment is placed in ordinary bags when possible. Overflow is returned through
 mail in groups of at most 12 attachments, preserving the original item instances,
 enchants, gems, durability and ownership.
+
+When `Progression.Clamp.StarterKit = 1`, each emptied equipment slot is matched
+with a green item the clamped character can use. The selector respects the target
+level, equipment slot, class armor progression, weapon type and class-relevant
+stats. It also excludes quest-bound, unique, conjured, loot-container and
+zone-restricted items. Vanilla, TBC and Wrath item-level ceilings keep lower
+progression kits from pulling equipment forward from later content.
+
+The replacements arrive in a separate **Progression Starter Equipment Cache**
+mail attachment. It opens through the normal loot window like a lockbox, and its
+per-character contents persist in `item_loot_items` until collected. Full bags do
+not destroy uncollected cache contents. The original high-level equipment remains
+in bags or its separate safekeeping mail.
 
 The spell filter deliberately leaves racials, professions, mounts, companions,
 quest rewards and other generic spells alone. It removes high-level ranks as a

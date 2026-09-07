@@ -28,9 +28,16 @@ Progression.Clamp.RemoveHighLevelSpells = 1
 Progression.Clamp.UnequipHighLevelGear = 1
 Progression.Clamp.MailOverflowGear = 1
 
+# When equipment is removed, mail a lootable cache containing green replacements
+# for the emptied slots. Replacements are selected from the world item templates
+# by target level, class usability, slot, weapon type and useful class stats.
+Progression.Clamp.StarterKit = 1
+Progression.Clamp.StarterCacheEntry = 900100
+
 # Overflow equipment is mailed by this existing world creature entry. The stock
 # value is The Postmaster. SenderName is used for the letter's RP signature.
 Progression.Mail.SenderEntry = 34337
 Progression.Mail.SenderName = "Keepers of the Realm"
 Progression.Mail.Subject = "The Call of an Earlier Age"
+Progression.Mail.StarterSubject = "Equipment for the Earlier Age"
 Progression.Mail.Body = "Adventurer,$B$BThe realm has been drawn back to an earlier age, and some of the equipment you carried belongs to battles yet to come.$B$BThese items have been returned to you for safekeeping. They are yours still, but their time has not yet arrived.$B$BWhen the realm advances, you may reclaim their full use.$B$BUntil then, steel yourself for the trials that lie before you.$B$B-- {sender}"

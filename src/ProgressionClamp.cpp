@@ -9,6 +9,8 @@
 #include "DatabaseEnv.h"
 #include "Item.h"
 #include "Log.h"
+#include "LootItemStorage.h"
+#include "LootMgr.h"
 #include "Mail.h"
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
@@ -39,9 +41,12 @@ struct ClampConfig
     bool removeSpells = true;
     bool unequipGear = true;
     bool mailOverflow = true;
+    bool starterKit = true;
+    uint32 starterCacheEntry = 900100;
     uint32 mailSenderEntry = 34337; // The Postmaster in the stock world DB.
     std::string mailSenderName = "Keepers of the Realm";
     std::string mailSubject = "The Call of an Earlier Age";
+    std::string starterSubject = "Equipment for the Earlier Age";
     std::string mailBody = "Adventurer,$B$BThe realm has been drawn back to an earlier age, and some of the equipment you carried belongs to battles yet to come.$B$BThese items have been returned to you for safekeeping. They are yours still, but their time has not yet arrived.$B$BWhen the realm advances, you may reclaim their full use.$B$BUntil then, steel yourself for the trials that lie before you.$B$B-- {sender}";
 };
 
@@ -58,6 +63,12 @@ struct ClampPreview
     uint32 targetLevel = 0;
     std::vector<uint32> spells;
     std::vector<std::string> items;
+};
+
+struct RemovedEquipment
+{
+    uint8 slot;
+    ItemTemplate const* itemTemplate;
 };
 
 uint32 ClampTarget(Player const* player, uint32 cap)
@@ -142,6 +153,159 @@ std::vector<uint8> FindHighLevelEquipment(Player* player, uint32 cap)
     return result;
 }
 
+uint32 MaximumStarterItemLevel(uint32 target)
+{
+    if (target <= 60)
+        return target + 10;
+    if (target <= 70)
+        return 115;
+    return 187;
+}
+
+int32 ClassStatWeight(uint8 playerClass, uint32 stat)
+{
+    switch (playerClass)
+    {
+        case CLASS_WARRIOR:
+        case CLASS_DEATH_KNIGHT:
+            if (stat == ITEM_MOD_STRENGTH || stat == ITEM_MOD_ATTACK_POWER) return 5;
+            if (stat == ITEM_MOD_STAMINA || stat == ITEM_MOD_DEFENSE_SKILL_RATING) return 2;
+            return stat == ITEM_MOD_AGILITY ? 1 : 0;
+        case CLASS_PALADIN:
+            if (stat == ITEM_MOD_STRENGTH || stat == ITEM_MOD_ATTACK_POWER) return 4;
+            if (stat == ITEM_MOD_INTELLECT || stat == ITEM_MOD_SPELL_POWER) return 3;
+            return stat == ITEM_MOD_STAMINA ? 2 : 0;
+        case CLASS_HUNTER:
+            if (stat == ITEM_MOD_AGILITY || stat == ITEM_MOD_RANGED_ATTACK_POWER) return 5;
+            if (stat == ITEM_MOD_ATTACK_POWER) return 3;
+            return stat == ITEM_MOD_STAMINA ? 2 : 0;
+        case CLASS_ROGUE:
+            if (stat == ITEM_MOD_AGILITY || stat == ITEM_MOD_ATTACK_POWER) return 5;
+            return stat == ITEM_MOD_STAMINA ? 2 : 0;
+        case CLASS_PRIEST:
+        case CLASS_MAGE:
+        case CLASS_WARLOCK:
+            if (stat == ITEM_MOD_INTELLECT || stat == ITEM_MOD_SPELL_POWER) return 5;
+            if (stat == ITEM_MOD_SPIRIT || stat == ITEM_MOD_MANA_REGENERATION) return 3;
+            return stat == ITEM_MOD_STAMINA ? 2 : 0;
+        case CLASS_SHAMAN:
+        case CLASS_DRUID:
+            if (stat == ITEM_MOD_AGILITY || stat == ITEM_MOD_STRENGTH ||
+                stat == ITEM_MOD_INTELLECT || stat == ITEM_MOD_SPELL_POWER) return 4;
+            if (stat == ITEM_MOD_ATTACK_POWER || stat == ITEM_MOD_MANA_REGENERATION) return 3;
+            return stat == ITEM_MOD_STAMINA || stat == ITEM_MOD_SPIRIT ? 2 : 0;
+        default:
+            return 0;
+    }
+}
+
+int64 StarterItemScore(Player* player, ItemTemplate const& itemTemplate)
+{
+    int64 score = static_cast<int64>(itemTemplate.RequiredLevel) * 100000
+        + static_cast<int64>(itemTemplate.ItemLevel) * 100;
+    for (uint32 index = 0; index < itemTemplate.StatsCount && index < MAX_ITEM_PROTO_STATS; ++index)
+        score += static_cast<int64>(ClassStatWeight(player->getClass(), itemTemplate.ItemStat[index].ItemStatType))
+            * std::max(itemTemplate.ItemStat[index].ItemStatValue, 0);
+    return score;
+}
+
+bool IsArmorBodySlot(uint8 slot)
+{
+    switch (slot)
+    {
+        case EQUIPMENT_SLOT_HEAD:
+        case EQUIPMENT_SLOT_SHOULDERS:
+        case EQUIPMENT_SLOT_CHEST:
+        case EQUIPMENT_SLOT_WAIST:
+        case EQUIPMENT_SLOT_LEGS:
+        case EQUIPMENT_SLOT_FEET:
+        case EQUIPMENT_SLOT_WRISTS:
+        case EQUIPMENT_SLOT_HANDS:
+            return true;
+        default:
+            return false;
+    }
+}
+
+uint32 ClassArmorSubclass(uint8 playerClass, uint32 target)
+{
+    switch (playerClass)
+    {
+        case CLASS_WARRIOR:
+        case CLASS_PALADIN:
+            return target >= 40 ? ITEM_SUBCLASS_ARMOR_PLATE : ITEM_SUBCLASS_ARMOR_MAIL;
+        case CLASS_DEATH_KNIGHT:
+            return ITEM_SUBCLASS_ARMOR_PLATE;
+        case CLASS_HUNTER:
+        case CLASS_SHAMAN:
+            return target >= 40 ? ITEM_SUBCLASS_ARMOR_MAIL : ITEM_SUBCLASS_ARMOR_LEATHER;
+        case CLASS_ROGUE:
+        case CLASS_DRUID:
+            return ITEM_SUBCLASS_ARMOR_LEATHER;
+        default:
+            return ITEM_SUBCLASS_ARMOR_CLOTH;
+    }
+}
+
+bool SameEquipmentKind(Player* player, RemovedEquipment const& removed,
+    ItemTemplate const& candidate, uint32 target)
+{
+    if (removed.itemTemplate->Class != candidate.Class)
+        return false;
+    if (candidate.Class == ITEM_CLASS_ARMOR && IsArmorBodySlot(removed.slot))
+        return candidate.SubClass == ClassArmorSubclass(player->getClass(), target);
+    // Preserve weapon choice (staff, bow, sword, and so on). For jewelry,
+    // shields, cloaks and relics, slot and usability checks choose the result.
+    return candidate.Class != ITEM_CLASS_WEAPON || removed.itemTemplate->SubClass == candidate.SubClass;
+}
+
+uint32 FindGreenReplacement(Player* player, RemovedEquipment const& removed, uint32 target,
+    std::set<uint32> const& alreadySelected)
+{
+    uint32 bestEntry = 0;
+    int64 bestScore = -1;
+    uint32 const minimumRequiredLevel = target > 10 ? target - 10 : 1;
+    uint32 const maximumItemLevel = MaximumStarterItemLevel(target);
+
+    for (auto const& [entry, itemTemplate] : *sObjectMgr->GetItemTemplateStore())
+    {
+        if (itemTemplate.Quality != ITEM_QUALITY_UNCOMMON || itemTemplate.RequiredLevel < minimumRequiredLevel ||
+            itemTemplate.RequiredLevel > target || itemTemplate.ItemLevel > maximumItemLevel ||
+            itemTemplate.StartQuest || itemTemplate.Area || itemTemplate.Map ||
+            itemTemplate.Bonding == BIND_QUEST_ITEM || itemTemplate.Bonding == BIND_QUEST_ITEM1 ||
+            itemTemplate.MaxCount == 1 || itemTemplate.HasFlag(ITEM_FLAG_CONJURED) ||
+            itemTemplate.HasFlag(ITEM_FLAG_HAS_LOOT) || alreadySelected.count(entry) ||
+            !SameEquipmentKind(player, removed, itemTemplate, target) ||
+            player->FindEquipSlot(&itemTemplate, removed.slot, false) != removed.slot ||
+            player->CanUseItem(&itemTemplate) != EQUIP_ERR_OK)
+            continue;
+
+        int64 const score = StarterItemScore(player, itemTemplate);
+        if (score > bestScore || (score == bestScore && entry < bestEntry))
+        {
+            bestEntry = entry;
+            bestScore = score;
+        }
+    }
+    return bestEntry;
+}
+
+std::vector<uint32> BuildStarterKit(Player* player, std::vector<RemovedEquipment> const& removed, uint32 target)
+{
+    std::vector<uint32> result;
+    std::set<uint32> selected;
+    for (RemovedEquipment const& equipment : removed)
+    {
+        uint32 const replacement = FindGreenReplacement(player, equipment, target, selected);
+        if (replacement)
+        {
+            result.push_back(replacement);
+            selected.insert(replacement);
+        }
+    }
+    return result;
+}
+
 ClampPreview BuildPreview(Player* player, uint32 cap)
 {
     ClampPreview preview;
@@ -215,21 +379,25 @@ std::size_t RemoveHighLevelClassSpells(Player* player, uint32 cap)
     return spells.size();
 }
 
-std::size_t StoreOrMailHighLevelEquipment(Player* player, uint32 cap, std::size_t& mailed, std::size_t& skipped)
+std::size_t StoreOrMailHighLevelEquipment(Player* player, uint32 cap, std::size_t& mailed,
+    std::size_t& skipped, std::size_t& starterItems)
 {
     std::vector<Item*> mailItems;
+    std::vector<RemovedEquipment> removedEquipment;
     std::size_t moved = 0;
     for (uint8 slot : FindHighLevelEquipment(player, cap))
     {
         Item* item = player->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
         if (!item)
             continue;
+        ItemTemplate const* itemTemplate = item->GetTemplate();
 
         ItemPosCountVec destination;
         if (player->CanStoreItem(NULL_BAG, NULL_SLOT, destination, item, false) == EQUIP_ERR_OK)
         {
             player->RemoveItem(INVENTORY_SLOT_BAG_0, slot, true);
             player->StoreItem(destination, item, true);
+            removedEquipment.push_back({ slot, itemTemplate });
             ++moved;
             continue;
         }
@@ -242,10 +410,16 @@ std::size_t StoreOrMailHighLevelEquipment(Player* player, uint32 cap, std::size_
 
         player->MoveItemFromInventory(INVENTORY_SLOT_BAG_0, slot, true);
         mailItems.push_back(item);
+        removedEquipment.push_back({ slot, itemTemplate });
         ++mailed;
     }
 
-    if (!mailItems.empty())
+    std::vector<uint32> replacements;
+    if (config.starterKit && !removedEquipment.empty())
+        replacements = BuildStarterKit(player, removedEquipment, cap);
+    starterItems = replacements.size();
+
+    if (!mailItems.empty() || !replacements.empty())
     {
         CharacterDatabaseTransaction transaction = CharacterDatabase.BeginTransaction();
         for (Item* item : mailItems)
@@ -264,6 +438,36 @@ std::size_t StoreOrMailHighLevelEquipment(Player* player, uint32 cap, std::size_
             for (std::size_t index = offset; index < end; ++index)
                 draft.AddItem(mailItems[index]);
             draft.SendMailTo(transaction, MailReceiver(player),
+                MailSender(MAIL_CREATURE, config.mailSenderEntry, MAIL_STATIONERY_GM), MAIL_CHECK_MASK_HAS_BODY);
+        }
+
+        for (std::size_t offset = 0; offset < replacements.size(); offset += MAX_NR_LOOT_ITEMS)
+        {
+            Item* cache = Item::CreateItem(config.starterCacheEntry, 1, player);
+            if (!cache)
+            {
+                LOG_ERROR("module", "mod-progression: starter cache item {} is missing; no replacement cache was mailed to {}.",
+                    config.starterCacheEntry, player->GetName());
+                starterItems = 0;
+                break;
+            }
+
+            cache->SetOwnerGUID(player->GetGUID());
+            cache->loot.containerGUID = cache->GetGUID();
+            cache->loot.lootOwnerGUID = player->GetGUID();
+            cache->loot.sourceWorldObjectGUID = cache->GetGUID();
+            std::size_t const end = std::min(offset + static_cast<std::size_t>(MAX_NR_LOOT_ITEMS), replacements.size());
+            for (std::size_t index = offset; index < end; ++index)
+                cache->loot.AddItem(LootStoreItem(replacements[index], 0, 100.0f, false,
+                    LOOT_MODE_DEFAULT, 0, 1, 1));
+            cache->m_lootGenerated = true;
+            sLootItemStorage->AddNewStoredLoot(&cache->loot, player);
+            cache->SaveToDB(transaction);
+
+            MailDraft starterDraft(config.starterSubject,
+                "Your higher-level equipment has been set aside. Open this cache for green replacement equipment selected for your class and current progression level.");
+            starterDraft.AddItem(cache);
+            starterDraft.SendMailTo(transaction, MailReceiver(player),
                 MailSender(MAIL_CREATURE, config.mailSenderEntry, MAIL_STATIONERY_GM), MAIL_CHECK_MASK_HAS_BODY);
         }
         player->SaveInventoryAndGoldToDB(transaction);
@@ -313,7 +517,9 @@ bool ClampPlayer(Player* player, uint32 cap, ChatHandler* feedback)
     std::size_t const removedSpells = config.removeSpells ? RemoveHighLevelClassSpells(player, target) : 0;
     std::size_t mailed = 0;
     std::size_t skipped = 0;
-    std::size_t const bagged = config.unequipGear ? StoreOrMailHighLevelEquipment(player, target, mailed, skipped) : 0;
+    std::size_t starterItems = 0;
+    std::size_t const bagged = config.unequipGear
+        ? StoreOrMailHighLevelEquipment(player, target, mailed, skipped, starterItems) : 0;
 
     player->UpdateAllStats();
     player->SetFullHealth();
@@ -322,7 +528,7 @@ bool ClampPlayer(Player* player, uint32 cap, ChatHandler* feedback)
     std::ostringstream message;
     message << "[Progression] Clamped " << player->GetName() << " from level " << oldLevel << " to " << target
         << "; removed " << removedSpells << " high-level class spells; moved " << bagged
-        << " equipped items to bags; mailed " << mailed << ".";
+        << " equipped items to bags; mailed " << mailed << "; starter replacements: " << starterItems << ".";
     if (skipped)
         message << " " << skipped << " items stayed equipped because bags were full and overflow mail is disabled.";
     if (feedback)
@@ -358,9 +564,12 @@ public:
         config.removeSpells = sConfigMgr->GetOption<bool>("Progression.Clamp.RemoveHighLevelSpells", true);
         config.unequipGear = sConfigMgr->GetOption<bool>("Progression.Clamp.UnequipHighLevelGear", true);
         config.mailOverflow = sConfigMgr->GetOption<bool>("Progression.Clamp.MailOverflowGear", true);
+        config.starterKit = sConfigMgr->GetOption<bool>("Progression.Clamp.StarterKit", true);
+        config.starterCacheEntry = sConfigMgr->GetOption<uint32>("Progression.Clamp.StarterCacheEntry", 900100);
         config.mailSenderEntry = sConfigMgr->GetOption<uint32>("Progression.Mail.SenderEntry", 34337);
         config.mailSenderName = sConfigMgr->GetOption<std::string>("Progression.Mail.SenderName", "Keepers of the Realm");
         config.mailSubject = sConfigMgr->GetOption<std::string>("Progression.Mail.Subject", "The Call of an Earlier Age");
+        config.starterSubject = sConfigMgr->GetOption<std::string>("Progression.Mail.StarterSubject", "Equipment for the Earlier Age");
         config.mailBody = sConfigMgr->GetOption<std::string>("Progression.Mail.Body", DefaultMailBody);
     }
 };
