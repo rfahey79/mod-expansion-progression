@@ -178,7 +178,8 @@ Progression.ClampExistingCharacters = 1
 ```
 
 After an automatic login clamp, the character receives the result summary and a
-separate notice that their talents and pet talents were reset. The default
+separate on-screen notification and chat message that their talents and pet
+talents were reset. The default
 remains `0` because lowering levels, resetting talents, removing spells and
 moving equipment are intentional character changes. `clamp all` affects the
 online roster only; the login setting handles the rest over time.
