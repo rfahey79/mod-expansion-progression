@@ -156,7 +156,9 @@ progression kits from pulling equipment forward from later content.
 
 The replacements arrive in a separate **Progression Starter Equipment Cache**
 mail attachment. It opens through the normal loot window like a lockbox, and its
-per-character contents persist in `item_loot_items` until collected. Full bags do
+per-character contents persist in `item_loot_storage` until collected. The world
+updates include the required `item_loot_template` anchor so AzerothCore can
+reconstruct those contents when the mailed cache is loaded. Full bags do
 not destroy uncollected cache contents. The original high-level equipment remains
 in bags or its separate safekeeping mail.
 
