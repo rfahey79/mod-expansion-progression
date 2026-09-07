@@ -37,6 +37,7 @@ namespace
 struct ClampConfig
 {
     bool automatic = false;
+    bool clampPets = true;
     bool resetTalents = true;
     bool removeSpells = true;
     bool unequipGear = true;
@@ -61,6 +62,7 @@ struct ClampPreview
 {
     uint32 oldLevel = 0;
     uint32 targetLevel = 0;
+    std::size_t pets = 0;
     std::vector<uint32> spells;
     std::vector<std::string> items;
 };
@@ -151,6 +153,84 @@ std::vector<uint8> FindHighLevelEquipment(Player* player, uint32 cap)
                 if (itemTemplate->RequiredLevel > cap)
                     result.push_back(slot);
     return result;
+}
+
+std::size_t CountHighLevelPets(Player* player, uint32 target)
+{
+    std::set<uint32> petNumbers;
+    auto inspect = [&](PetStable::PetInfo const& petInfo)
+    {
+        if (petInfo.Level > target)
+            petNumbers.insert(petInfo.PetNumber);
+    };
+
+    if (PetStable* stable = player->GetPetStable())
+    {
+        if (stable->CurrentPet)
+            inspect(stable->CurrentPet.value());
+        for (Optional<PetStable::PetInfo> const& pet : stable->StabledPets)
+            if (pet)
+                inspect(pet.value());
+        for (PetStable::PetInfo const& pet : stable->UnslottedPets)
+            inspect(pet);
+    }
+
+    if (Pet* pet = player->GetPet())
+        if (pet->GetLevel() > target)
+            petNumbers.insert(pet->GetCharmInfo()->GetPetNumber());
+    return petNumbers.size();
+}
+
+std::size_t ClampPetLevels(Player* player, uint32 target)
+{
+    std::set<uint32> clampedPetNumbers;
+    auto clampInfo = [&](PetStable::PetInfo& petInfo)
+    {
+        if (petInfo.Level <= target)
+            return;
+        petInfo.Level = static_cast<uint8>(target);
+        petInfo.Experience = 0;
+        clampedPetNumbers.insert(petInfo.PetNumber);
+    };
+
+    if (PetStable* stable = player->GetPetStable())
+    {
+        if (stable->CurrentPet)
+            clampInfo(stable->CurrentPet.value());
+        for (Optional<PetStable::PetInfo>& pet : stable->StabledPets)
+            if (pet)
+                clampInfo(pet.value());
+        for (PetStable::PetInfo& pet : stable->UnslottedPets)
+            clampInfo(pet);
+    }
+
+    if (Pet* pet = player->GetPet())
+    {
+        uint32 const petNumber = pet->GetCharmInfo()->GetPetNumber();
+        if (pet->GetLevel() > target)
+        {
+            pet->GivePetLevel(static_cast<uint8>(target));
+            clampedPetNumbers.insert(petNumber);
+        }
+        pet->SetUInt32Value(UNIT_FIELD_PETEXPERIENCE, 0);
+        pet->SetFullHealth();
+        pet->SetPower(POWER_MANA, pet->GetMaxPower(POWER_MANA));
+        player->PetSpellInitialize();
+        player->SendTalentsInfoData(true);
+    }
+
+    // Also normalize inactive Hunter pets and unsummoned Warlock demons. The
+    // in-memory stable data above prevents a later summon from restoring the old
+    // level during this session; this query makes that correction persistent.
+    CharacterDatabase.Execute("UPDATE character_pet SET level = {}, exp = 0 WHERE owner = {} AND level > {}",
+        target, player->GetGUID().GetCounter(), target);
+    return clampedPetNumbers.size();
+}
+
+bool NeedsClamp(Player* player, uint32 cap)
+{
+    uint32 const target = ClampTarget(player, cap);
+    return player->GetLevel() > target || (config.clampPets && CountHighLevelPets(player, target));
 }
 
 uint32 MaximumStarterItemLevel(uint32 target)
@@ -312,6 +392,8 @@ ClampPreview BuildPreview(Player* player, uint32 cap)
     preview.oldLevel = player->GetLevel();
     uint32 const target = ClampTarget(player, cap);
     preview.targetLevel = std::min(preview.oldLevel, target);
+    if (config.clampPets)
+        preview.pets = CountHighLevelPets(player, target);
     if (config.removeSpells)
         preview.spells = FindHighLevelClassSpells(player, target);
     if (config.unequipGear)
@@ -327,7 +409,8 @@ void SendPreview(ChatHandler* handler, Player* player, ClampPreview const& previ
     message << "[Progression] Clamp preview for " << player->GetName() << ": level "
         << preview.oldLevel << " -> " << preview.targetLevel << "; talents "
         << (config.resetTalents ? "will be reset" : "unchanged") << "; high-level class spells: "
-        << preview.spells.size() << "; equipped over-level items: " << preview.items.size() << ".";
+        << preview.spells.size() << "; pets above target: " << preview.pets
+        << "; equipped over-level items: " << preview.items.size() << ".";
     handler->SendSysMessage(message.str().c_str());
     for (std::string const& item : preview.items)
         handler->SendSysMessage(("  unequip: " + item).c_str());
@@ -479,10 +562,15 @@ std::size_t StoreOrMailHighLevelEquipment(Player* player, uint32 cap, std::size_
 bool ClampPlayer(Player* player, uint32 cap, ChatHandler* feedback)
 {
     uint32 const target = ClampTarget(player, cap);
-    if (!player || player->GetLevel() <= target)
+    if (!player)
+        return false;
+
+    bool const lowerPlayer = player->GetLevel() > target;
+    std::size_t const petsAboveTarget = config.clampPets ? CountHighLevelPets(player, target) : 0;
+    if (!lowerPlayer && !petsAboveTarget)
     {
-        if (feedback && player)
-            feedback->SendSysMessage(("[Progression] " + player->GetName() + " is already at or below its safe clamp level " + std::to_string(target) + ".").c_str());
+        if (feedback)
+            feedback->SendSysMessage(("[Progression] " + player->GetName() + " and their pets are already at or below safe clamp level " + std::to_string(target) + ".").c_str());
         return false;
     }
 
@@ -500,25 +588,29 @@ bool ClampPlayer(Player* player, uint32 cap, ChatHandler* feedback)
     std::lock_guard<std::mutex> clampLock(clampMutex);
 
     uint32 const oldLevel = player->GetLevel();
-    player->GiveLevel(static_cast<uint8>(target));
-    if (player->GetLevel() != target)
+    if (lowerPlayer)
     {
-        if (feedback)
+        player->GiveLevel(static_cast<uint8>(target));
+        if (player->GetLevel() != target)
         {
-            feedback->SendSysMessage(("[Progression] Could not lower " + player->GetName() + " to level " + std::to_string(target) + "; no normalization changes were made.").c_str());
-            feedback->SetSentErrorMessage(true);
+            if (feedback)
+            {
+                feedback->SendSysMessage(("[Progression] Could not lower " + player->GetName() + " to level " + std::to_string(target) + "; no normalization changes were made.").c_str());
+                feedback->SetSentErrorMessage(true);
+            }
+            return false;
         }
-        return false;
+        player->SetUInt32Value(PLAYER_XP, 0);
     }
-    player->SetUInt32Value(PLAYER_XP, 0);
 
-    if (config.resetTalents)
+    if (lowerPlayer && config.resetTalents)
         ResetAllTalentSpecs(player);
-    std::size_t const removedSpells = config.removeSpells ? RemoveHighLevelClassSpells(player, target) : 0;
+    std::size_t const clampedPets = config.clampPets ? ClampPetLevels(player, target) : 0;
+    std::size_t const removedSpells = lowerPlayer && config.removeSpells ? RemoveHighLevelClassSpells(player, target) : 0;
     std::size_t mailed = 0;
     std::size_t skipped = 0;
     std::size_t starterItems = 0;
-    std::size_t const bagged = config.unequipGear
+    std::size_t const bagged = lowerPlayer && config.unequipGear
         ? StoreOrMailHighLevelEquipment(player, target, mailed, skipped, starterItems) : 0;
 
     player->UpdateAllStats();
@@ -526,16 +618,20 @@ bool ClampPlayer(Player* player, uint32 cap, ChatHandler* feedback)
     player->SaveToDB(false, false);
 
     std::ostringstream message;
-    message << "[Progression] Clamped " << player->GetName() << " from level " << oldLevel << " to " << target
-        << "; removed " << removedSpells << " high-level class spells; moved " << bagged
-        << " equipped items to bags; mailed " << mailed << "; starter replacements: " << starterItems << ".";
+    if (lowerPlayer)
+        message << "[Progression] Clamped " << player->GetName() << " from level " << oldLevel << " to " << player->GetLevel();
+    else
+        message << "[Progression] Normalized pets for " << player->GetName() << " at level " << player->GetLevel();
+    message << "; removed " << removedSpells << " high-level class spells; moved " << bagged
+        << " equipped items to bags; clamped " << clampedPets << " pets; mailed " << mailed
+        << "; starter replacements: " << starterItems << ".";
     if (skipped)
         message << " " << skipped << " items stayed equipped because bags were full and overflow mail is disabled.";
     if (feedback)
         feedback->SendSysMessage(message.str().c_str());
     if (player->GetSession() && (!feedback || feedback->GetSession() != player->GetSession()))
         ChatHandler(player->GetSession()).SendSysMessage(message.str().c_str());
-    if (config.resetTalents && player->GetSession())
+    if (lowerPlayer && config.resetTalents && player->GetSession())
         ChatHandler(player->GetSession()).SendSysMessage(
             "[Progression] Your talents and pet talents have been reset. Please spend your talent points again.");
     LOG_INFO("module", "{}", message.str());
@@ -560,6 +656,7 @@ public:
     {
         std::lock_guard<std::mutex> clampLock(clampMutex);
         config.automatic = sConfigMgr->GetOption<bool>("Progression.ClampExistingCharacters", false);
+        config.clampPets = sConfigMgr->GetOption<bool>("Progression.Clamp.Pets", true);
         config.resetTalents = sConfigMgr->GetOption<bool>("Progression.Clamp.ResetTalents", true);
         config.removeSpells = sConfigMgr->GetOption<bool>("Progression.Clamp.RemoveHighLevelSpells", true);
         config.unequipGear = sConfigMgr->GetOption<bool>("Progression.Clamp.UnequipHighLevelGear", true);
@@ -586,7 +683,7 @@ public:
             std::lock_guard<std::mutex> clampLock(clampMutex);
             automatic = config.automatic;
         }
-        if (automatic && ProgressionRuntime::IsEnabled() && player->GetLevel() > ClampTarget(player, ProgressionRuntime::GetCap()))
+        if (automatic && ProgressionRuntime::IsEnabled() && NeedsClamp(player, ProgressionRuntime::GetCap()))
         {
             std::lock_guard<std::mutex> pendingLock(pendingMutex);
             pendingAutomaticClamps.insert(player->GetGUID().GetCounter());
@@ -607,7 +704,7 @@ public:
             std::lock_guard<std::mutex> clampLock(clampMutex);
             automatic = config.automatic;
         }
-        if (automatic && ProgressionRuntime::IsEnabled() && player->GetLevel() > ClampTarget(player, ProgressionRuntime::GetCap()))
+        if (automatic && ProgressionRuntime::IsEnabled() && NeedsClamp(player, ProgressionRuntime::GetCap()))
             ClampPlayer(player, ProgressionRuntime::GetCap(), nullptr);
     }
 };
@@ -656,7 +753,7 @@ public:
             std::size_t clamped = 0;
             for (ObjectGuid const& guid : players)
                 if (Player* player = ObjectAccessor::FindPlayer(guid))
-                    if (player->GetLevel() > ClampTarget(player, ProgressionRuntime::GetCap()) && ClampPlayer(player, ProgressionRuntime::GetCap(), nullptr))
+                    if (NeedsClamp(player, ProgressionRuntime::GetCap()) && ClampPlayer(player, ProgressionRuntime::GetCap(), nullptr))
                         ++clamped;
             handler->SendSysMessage(("[Progression] Clamped " + std::to_string(clamped) + " online characters/bots. Offline characters are handled at login when Progression.ClampExistingCharacters = 1.").c_str());
             return true;

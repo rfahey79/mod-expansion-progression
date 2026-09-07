@@ -23,6 +23,8 @@ Progression.AnnounceOnLogin = 1
 # normalize them when they log in. GMs may always use .progression clamp.
 Progression.ClampExistingCharacters = 0
 
+# Lower active and stored Hunter/Warlock pets with their owner and clear pet XP.
+Progression.Clamp.Pets = 1
 Progression.Clamp.ResetTalents = 1
 Progression.Clamp.RemoveHighLevelSpells = 1
 Progression.Clamp.UnequipHighLevelGear = 1

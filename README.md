@@ -137,8 +137,12 @@ phase:
 ```
 
 Clamping lowers the character to its safe target, clears XP, resets both talent
-specs and pet talents, removes class spells above that target, and unequips items
-whose `RequiredLevel` exceeds it.
+specs and pet talents, lowers active and stored Hunter/Warlock pets to the same
+safe target, clears their XP, removes class spells above that target, and
+unequips items whose `RequiredLevel` exceeds it. Pet clamping is enabled by
+`Progression.Clamp.Pets = 1`.
+Running `.progression clamp <name>` also repairs pets for an owner who is already
+at the safe target; it does not repeat the owner's talent, spell, or gear changes.
 Equipment is placed in ordinary bags when possible. Overflow is returned through
 mail in groups of at most 12 attachments, preserving the original item instances,
 enchants, gems, durability and ownership.
