@@ -15,6 +15,21 @@ Progression.LevelCap = 60
 
 Progression.AnnounceOnLogin = 1
 
+# Dungeon Finder follows the realm progression cap while Expansion remains 2.
+# Caps 1-60 are Classic, 61-70 are Burning Crusade, and 71-80 are Wrath.
+Progression.LFG.Enable = 1
+
+# Mark LFG entries from later expansions unavailable. The DBC expansion field
+# on each dungeon/category is used; player level is not used for classification.
+Progression.LFG.LockFutureDungeons = 1
+
+# Rewrite a queued random category to the current phase (the same supported
+# hook used by mod-rdf-expansion) and lock future random categories.
+Progression.LFG.RestrictRandom = 1
+
+# Lock future-expansion entries in the Specific Dungeons list.
+Progression.LFG.RestrictSpecific = 1
+
 # .progression cap changes the live value only. Edit this file to persist it.
 # .reload config re-reads these values and discards any live command override.
 # Applies equally to human and bot Player objects; no Playerbots dependency.

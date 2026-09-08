@@ -33,9 +33,25 @@ int main()
 {
     ProgressionWorldScript realm;
     ProgressionPlayerScript hooks;
+    ProgressionLfgScript lfgHooks;
     ChatHandler gm;
     realm.OnAfterConfigLoad(false);
     CHECK(state.enabled && state.cap == 60);
+    CHECK(Progression::PhaseForCap(60) == Progression::ExpansionPhase::Classic);
+    CHECK(Progression::PhaseForCap(70) == Progression::ExpansionPhase::BurningCrusade);
+    CHECK(Progression::PhaseForCap(80) == Progression::ExpansionPhase::Wrath);
+    uint32 randomDungeon = Progression::RandomWrath;
+    hooks.OnPlayerQueueRandomDungeon(nullptr, randomDungeon);
+    CHECK(randomDungeon == Progression::RandomClassic);
+    lfg::LFGDungeonData futureSpecific{1, 1};
+    uint8 lfgLevel = 60;
+    uint32 lockData = 0;
+    lfgHooks.OnInitializeLockedDungeons(nullptr, lfgLevel, lockData, &futureSpecific);
+    CHECK(lockData == lfg::LFG_LOCKSTATUS_INSUFFICIENT_EXPANSION);
+    lfg::LFGDungeonData classicSpecific{0, 1};
+    lockData = 0;
+    lfgHooks.OnInitializeLockedDungeons(nullptr, lfgLevel, lockData, &classicSpecific);
+    CHECK(lockData == 0);
     // Initial config loading must retain the full core maximum until ObjectMgr
     // has allocated and populated every level-data array.
     CHECK(world.configs[CONFIG_MAX_PLAYER_LEVEL] == 80);

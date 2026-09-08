@@ -5,11 +5,14 @@
 #include "CommandScript.h"
 #include "Config.h"
 #include "Log.h"
+#include "LFG.h"
+#include "LFGMgr.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
 #include "PlayerScript.h"
 #include "World.h"
 #include "WorldScript.h"
+#include "GlobalScript.h"
 
 #include <shared_mutex>
 #include <string>
@@ -22,6 +25,10 @@ struct ProgressionState
     bool startupComplete = false;
     bool enabled = false;
     bool announce = true;
+    bool lfgEnabled = true;
+    bool lfgLockFutureDungeons = true;
+    bool lfgRestrictRandom = true;
+    bool lfgRestrictSpecific = true;
     uint32 coreMaximum = Progression::ClientMaximum;
     uint32 cap = Progression::DefaultCap;
     uint32 startPlayer = 1;
@@ -112,6 +119,10 @@ public:
 
         state.enabled = sConfigMgr->GetOption<bool>("Progression.Enable", true);
         state.announce = sConfigMgr->GetOption<bool>("Progression.AnnounceOnLogin", true);
+        state.lfgEnabled = sConfigMgr->GetOption<bool>("Progression.LFG.Enable", true);
+        state.lfgLockFutureDungeons = sConfigMgr->GetOption<bool>("Progression.LFG.LockFutureDungeons", true);
+        state.lfgRestrictRandom = sConfigMgr->GetOption<bool>("Progression.LFG.RestrictRandom", true);
+        state.lfgRestrictSpecific = sConfigMgr->GetOption<bool>("Progression.LFG.RestrictSpecific", true);
         int32 const configured = sConfigMgr->GetOption<int32>("Progression.LevelCap", 60);
         if (configured < 1 || !Progression::ValidCap(static_cast<uint32>(configured), state.coreMaximum))
         {
@@ -126,8 +137,9 @@ public:
         ApplyRuntimeMaximum();
         if (reload)
             ApplyToOnlinePlayers(previouslyEnabled, previousCap);
-        LOG_INFO("module", "mod-progression: enabled={}, cap={}, original MaxPlayerLevel={}. Expansion is unchanged.",
-            state.enabled, state.cap, state.coreMaximum);
+        LOG_INFO("module", "mod-progression: enabled={}, cap={}, phase={}, original MaxPlayerLevel={}; LFG enabled={}, lock future={}, random={}, specific={}. Expansion is unchanged.",
+            state.enabled, state.cap, static_cast<uint32>(Progression::PhaseForCap(state.cap)), state.coreMaximum,
+            state.lfgEnabled, state.lfgLockFutureDungeons, state.lfgRestrictRandom, state.lfgRestrictSpecific);
     }
 };
 
@@ -137,7 +149,8 @@ public:
     ProgressionPlayerScript() : PlayerScript("ProgressionPlayerScript",
         { PLAYERHOOK_ON_LOGIN, PLAYERHOOK_ON_GIVE_EXP,
           PLAYERHOOK_ON_CAN_GIVE_LEVEL, PLAYERHOOK_ON_SET_MAX_LEVEL,
-          PLAYERHOOK_ON_UPDATE, PLAYERHOOK_ON_SAVE }) { }
+          PLAYERHOOK_ON_UPDATE, PLAYERHOOK_ON_SAVE,
+          PLAYERHOOK_ON_QUEUE_RANDOM_DUNGEON }) { }
 
     void OnPlayerGiveXP(Player* player, uint32& amount, Unit*, uint8) override
     {
@@ -182,6 +195,28 @@ public:
     {
         ClearCappedXP(player, state.enabled, state.cap);
     }
+
+    void OnPlayerQueueRandomDungeon(Player*, uint32& dungeonId) override
+    {
+        if (state.enabled && state.lfgEnabled && state.lfgRestrictRandom)
+            dungeonId = Progression::RestrictRandomDungeon(dungeonId, Progression::PhaseForCap(state.cap));
+    }
+};
+
+class ProgressionLfgScript final : public GlobalScript
+{
+public:
+    ProgressionLfgScript() : GlobalScript("ProgressionLfgScript",
+        { GLOBALHOOK_ON_INITIALIZE_LOCKED_DUNGEONS }) { }
+
+    void OnInitializeLockedDungeons(Player*, uint8&, uint32& lockData,
+        lfg::LFGDungeonData const* dungeon) override
+    {
+        if (dungeon && Progression::ShouldLockLfgDungeon(state.enabled, state.lfgEnabled,
+            state.lfgLockFutureDungeons, state.lfgRestrictRandom, state.lfgRestrictSpecific,
+            state.cap, dungeon->expansion, dungeon->type))
+            lockData = lfg::LFG_LOCKSTATUS_INSUFFICIENT_EXPANSION;
+    }
 };
 
 class ProgressionCommandScript final : public CommandScript
@@ -207,6 +242,8 @@ public:
             + "; progression cap: " + std::to_string(state.cap)
             + "; effective MaxPlayerLevel: " + std::to_string(sWorld->getIntConfig(CONFIG_MAX_PLAYER_LEVEL))
             + "; original MaxPlayerLevel: " + std::to_string(state.coreMaximum)
+            + "; LFG phase: " + std::to_string(static_cast<uint32>(Progression::PhaseForCap(state.cap)))
+            + (state.lfgEnabled ? " (enabled)" : " (disabled)")
             + ". Expansion unchanged. Live cap overrides reset on config reload/restart.";
         handler->SendSysMessage(message.c_str());
         return true;
@@ -246,6 +283,7 @@ void AddProgressionScripts()
 {
     new ProgressionWorldScript();
     new ProgressionPlayerScript();
+    new ProgressionLfgScript();
     new ProgressionCommandScript();
 }
 

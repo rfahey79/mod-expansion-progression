@@ -25,6 +25,10 @@ The module supports either directory name, `mod-progression` or
   gain XP or advance further; administrative downward level changes are allowed.
 - Online players receive the new maximum immediately; raising the cap requires
   no relog. A login message announces the active cap.
+- Dungeon Finder follows the cap-derived expansion phase. Future expansion
+  categories and specific dungeons are locked using each `LFGDungeons.dbc`
+  entry's explicit expansion metadata, and random queues are redirected to the
+  current phase through AzerothCore's supported random-dungeon hook.
 - The included world update adds one custom lootable starter-cache item. Commands
   use security level `SEC_GAMEMASTER` (2 or higher) and support the server console.
   Existing command security overrides still apply.
@@ -65,6 +69,10 @@ MaxPlayerLevel = 80
 Progression.Enable = 1
 Progression.LevelCap = 60
 Progression.AnnounceOnLogin = 1
+Progression.LFG.Enable = 1
+Progression.LFG.LockFutureDungeons = 1
+Progression.LFG.RestrictRandom = 1
+Progression.LFG.RestrictSpecific = 1
 ```
 
 Restart `worldserver` after installing the module. Look for the
@@ -97,6 +105,30 @@ configured starting levels. Invalid configured caps log an error and use
 
 Keep `MaxPlayerLevel = 80` in the main config if you intend to progress to 80.
 The module respects the original core maximum; it cannot raise past it.
+
+## Dungeon Finder progression
+
+Dungeon Finder uses the realm cap as its phase source, not the player's level:
+
+| Progression cap | Phase | Available Dungeon Finder content |
+| ---: | --- | --- |
+| 1-60 | Classic | Classic specific dungeons and Random Classic Dungeon |
+| 61-70 | Burning Crusade | Classic + TBC specific dungeons; random queues capped at TBC |
+| 71-80 | Wrath | Classic + TBC + Wrath |
+
+`Progression.LFG.LockFutureDungeons` is the master switch for marking later
+DBC entries unavailable. `RestrictSpecific` applies that lock to specific
+dungeons; `RestrictRandom` applies it to random categories and rewrites a queued
+future random category to the current phase. At Classic, all random requests
+become category 258. At TBC, Wrath normal/heroic requests become categories
+259/260. The actual specific-dungeon expansion classification comes from the
+DBC `ExpansionLevel` copied into AzerothCore's `LFGDungeonData`, rather than
+from a level-range guess or the queuing player's level.
+
+This deliberately leaves `Expansion = 2`, race/class availability, account
+expansion flags and AzerothCore source unchanged. Config reloads apply the LFG
+switches and current cap-derived phase immediately; cached player lock lists are
+rebuilt by AzerothCore whenever it next initializes that player's LFG data.
 
 ## Playerbots
 
@@ -211,11 +243,12 @@ Loading all data at the configured maximum makes later live phase changes safe.
 Trial-account restrictions, voluntary XP locks and other core restrictions may
 still impose a lower limit; the module does not clear those flags.
 
-This is a leveling progression module, not a content phase system. It does not
-gate raids, Outland/Northrend access, items, professions, talents, Death Knights,
-or achievements, and it does not detect raid completion. Wrath gameplay rules
-remain active. AzerothCore has no stock Death Knight stats below level 55, so a
-cap below 55 leaves Death Knights at level 55 and blocks further advancement.
+Outside Dungeon Finder, this remains a leveling progression module. It does not
+gate raids, physical Outland/Northrend access, items, professions, talents,
+Death Knights, or achievements, and it does not detect raid completion. Wrath
+gameplay rules remain active. AzerothCore has no stock Death Knight stats below
+level 55, so a cap below 55 leaves Death Knights at level 55 and blocks further
+advancement.
 
 ## Validation
 
@@ -256,6 +289,11 @@ checks do **not** substitute for a live worldserver/database/client test.
    Verify level/XP, both talent specs, class spell ranks, bag placement and mailed
    overflow. Repeat with an online bot, then enable login clamping and test an
    offline character on its next login.
+8. At cap 60, open Specific Dungeons and confirm TBC/Wrath entries are locked;
+   queue a random dungeon and confirm it uses Random Classic Dungeon. At cap 70,
+   confirm Classic/TBC specifics are available, Wrath specifics are locked, and
+   Wrath normal/heroic random selections redirect to their TBC counterparts.
+   At cap 80, confirm all three expansions are available.
 
 ## Source references
 
@@ -263,8 +301,10 @@ API/source review uses these exact revisions, rather than assuming older example
 still match the current hooks:
 
 - [AzerothCore module guide](https://www.azerothcore.org/wiki/create-a-module)
-- [Upstream Player XP loop and GiveLevel](https://github.com/azerothcore/azerothcore-wotlk/blob/70dda745ba9e9e2ed96f8b4b1be10bb98e5ca9c3/src/server/game/Entities/Player/Player.cpp)
-- [Upstream PlayerScript hooks](https://github.com/azerothcore/azerothcore-wotlk/blob/70dda745ba9e9e2ed96f8b4b1be10bb98e5ca9c3/src/server/game/Scripting/ScriptDefines/PlayerScript.h)
+- [Upstream Player XP loop and GiveLevel](https://github.com/azerothcore/azerothcore-wotlk/blob/db533ad7537a0641d076b13e5611f29f33558d06/src/server/game/Entities/Player/Player.cpp)
+- [Upstream PlayerScript hooks](https://github.com/azerothcore/azerothcore-wotlk/blob/db533ad7537a0641d076b13e5611f29f33558d06/src/server/game/Scripting/ScriptDefines/PlayerScript.h)
+- [Upstream LFG lock hooks and dungeon metadata](https://github.com/azerothcore/azerothcore-wotlk/tree/master/src/server/game/DungeonFinding)
+- [AzerothCore mod-rdf-expansion](https://github.com/azerothcore/mod-rdf-expansion)
 - [Playerbots core hooks](https://github.com/mod-playerbots/azerothcore-wotlk/blob/413bea61a85e20d9caef7d66fc601a661fdddd9d/src/server/game/Scripting/ScriptDefines/PlayerScript.h)
 - [Playerbots random-level selection](https://github.com/mod-playerbots/mod-playerbots/blob/master/src/Bot/RandomPlayerbotMgr.cpp)
 

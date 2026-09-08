@@ -14,7 +14,9 @@ enum { CONFIG_MAX_PLAYER_LEVEL, CONFIG_START_PLAYER_LEVEL, CONFIG_START_HEROIC_P
 enum { PLAYER_XP, PLAYER_FIELD_MAX_LEVEL };
 enum { WORLDHOOK_ON_BEFORE_CONFIG_LOAD, WORLDHOOK_ON_AFTER_CONFIG_LOAD, WORLDHOOK_ON_STARTUP };
 enum { PLAYERHOOK_ON_LOGIN, PLAYERHOOK_ON_GIVE_EXP, PLAYERHOOK_ON_CAN_GIVE_LEVEL,
-       PLAYERHOOK_ON_SET_MAX_LEVEL, PLAYERHOOK_ON_UPDATE, PLAYERHOOK_ON_SAVE };
+       PLAYERHOOK_ON_SET_MAX_LEVEL, PLAYERHOOK_ON_UPDATE, PLAYERHOOK_ON_SAVE,
+       PLAYERHOOK_ON_QUEUE_RANDOM_DUNGEON };
+enum { GLOBALHOOK_ON_INITIALIZE_LOCKED_DUNGEONS };
 constexpr uint32 SEC_GAMEMASTER = 2;
 constexpr uint8 CLASS_DEATH_KNIGHT = 6;
 class Unit {};
@@ -101,6 +103,18 @@ struct PlayerScript
     virtual void OnPlayerLogin(Player*) {}
     virtual void OnPlayerUpdate(Player*, uint32) {}
     virtual void OnPlayerSave(Player*) {}
+    virtual void OnPlayerQueueRandomDungeon(Player*, uint32&) {}
+};
+namespace lfg
+{
+enum { LFG_LOCKSTATUS_INSUFFICIENT_EXPANSION = 1 };
+struct LFGDungeonData { uint8 expansion = 0; uint8 type = 0; };
+}
+struct GlobalScript
+{
+    GlobalScript(char const*, std::vector<uint16>) {}
+    virtual ~GlobalScript() = default;
+    virtual void OnInitializeLockedDungeons(Player*, uint8&, uint32&, lfg::LFGDungeonData const*) {}
 };
 #define LOG_INFO(...) do {} while (false)
 #define LOG_ERROR(...) do {} while (false)
