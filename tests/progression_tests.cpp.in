@@ -52,6 +52,10 @@ int main()
     lockData = 0;
     lfgHooks.OnInitializeLockedDungeons(nullptr, lfgLevel, lockData, &classicSpecific);
     CHECK(lockData == 0);
+    lfg::LFGDungeonData futureRandom{1, Progression::LfgTypeRandom};
+    lockData = 0;
+    lfgHooks.OnInitializeLockedDungeons(nullptr, lfgLevel, lockData, &futureRandom);
+    CHECK(lockData == 0); // must remain selectable so the queue hook can redirect it
     // Initial config loading must retain the full core maximum until ObjectMgr
     // has allocated and populated every level-data array.
     CHECK(world.configs[CONFIG_MAX_PLAYER_LEVEL] == 80);

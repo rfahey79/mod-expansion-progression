@@ -117,11 +117,12 @@ Dungeon Finder uses the realm cap as its phase source, not the player's level:
 | 71-80 | Wrath | Classic + TBC + Wrath |
 
 `Progression.LFG.LockFutureDungeons` is the master switch for marking later
-DBC entries unavailable. `RestrictSpecific` applies that lock to specific
-dungeons; `RestrictRandom` applies it to random categories and rewrites a queued
-future random category to the current phase. At Classic, all random requests
-become category 258. At TBC, Wrath normal/heroic requests become categories
-259/260. The actual specific-dungeon expansion classification comes from the
+specific DBC entries unavailable. `RestrictSpecific` applies that lock to
+specific dungeons. `RestrictRandom` rewrites a queued future random category to
+the current phase but deliberately leaves the client-offered category selectable;
+this is required when a level-60 client offers Random BC instead of Random
+Classic. At Classic, all random requests become category 258. At TBC, Wrath
+normal/heroic requests become categories 259/260. The actual specific-dungeon expansion classification comes from the
 DBC `ExpansionLevel` copied into AzerothCore's `LFGDungeonData`, rather than
 from a level-range guess or the queuing player's level.
 

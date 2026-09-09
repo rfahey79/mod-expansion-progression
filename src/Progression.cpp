@@ -213,7 +213,7 @@ public:
         lfg::LFGDungeonData const* dungeon) override
     {
         if (dungeon && Progression::ShouldLockLfgDungeon(state.enabled, state.lfgEnabled,
-            state.lfgLockFutureDungeons, state.lfgRestrictRandom, state.lfgRestrictSpecific,
+            state.lfgLockFutureDungeons, state.lfgRestrictSpecific,
             state.cap, dungeon->expansion, dungeon->type))
             lockData = lfg::LFG_LOCKSTATUS_INSUFFICIENT_EXPANSION;
     }

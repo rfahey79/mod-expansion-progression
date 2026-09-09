@@ -39,14 +39,17 @@ inline ExpansionPhase PhaseForCap(std::uint32_t cap)
 }
 
 inline bool ShouldLockLfgDungeon(bool enabled, bool lfgEnabled, bool lockFuture,
-    bool restrictRandom, bool restrictSpecific, std::uint32_t cap,
+    bool restrictSpecific, std::uint32_t cap,
     std::uint8_t dungeonExpansion, std::uint8_t dungeonType)
 {
     if (!enabled || !lfgEnabled || !lockFuture ||
         dungeonExpansion <= static_cast<std::uint8_t>(PhaseForCap(cap)))
         return false;
 
-    return dungeonType == LfgTypeRandom ? restrictRandom : restrictSpecific;
+    // The 3.3.5 client stops offering Random Classic at higher levels and sends
+    // Random TBC/Wrath instead. Those category entries must remain selectable
+    // so OnPlayerQueueRandomDungeon can translate them to the active phase.
+    return dungeonType != LfgTypeRandom && restrictSpecific;
 }
 
 inline std::uint32_t RestrictRandomDungeon(std::uint32_t dungeonId, ExpansionPhase phase)

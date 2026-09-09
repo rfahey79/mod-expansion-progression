@@ -23,8 +23,9 @@ Progression.LFG.Enable = 1
 # on each dungeon/category is used; player level is not used for classification.
 Progression.LFG.LockFutureDungeons = 1
 
-# Rewrite a queued random category to the current phase (the same supported
-# hook used by mod-rdf-expansion) and lock future random categories.
+# Rewrite the random category offered by the 3.3.5 client to the current phase
+# using the same supported hook as mod-rdf-expansion. Random category entries
+# remain selectable so, for example, the offered Random BC can queue Classic.
 Progression.LFG.RestrictRandom = 1
 
 # Lock future-expansion entries in the Specific Dungeons list.
