@@ -13,7 +13,10 @@ If ZG has no timestamp, it uses AQ20 difficulty 0. Conflicting calendars log a
 warning and use ZG. An expired anchor advances by whole configured periods; a
 reset due exactly now is retained. A completely new database gets one shared
 calendar at the configured core reset hour, using the core's initialization rule.
-Subsequent resets use the existing core scheduling formula and warning queue.
+Subsequent resets use the next shared calendar boundary and the existing core
+warning queue. Existing calendars retain their saved hour; changing
+`Instance.ResetTimeHour` does not move an anchored calendar while this override
+is enabled. That setting supplies the hour only when bootstrapping a new calendar.
 
 Two generic hooks are added by `patches/raid-reset-hooks.patch`:
 
@@ -72,10 +75,8 @@ Test downtime and extended binds on your actual core before relying on them.
    Progression.RaidResetDays = 3
    ```
 
-   Leave the existing `Instance.ResetTimeHour` unchanged. The module uses the
-   saved anchor's exact timestamp for migration; core recurrence uses the configured
-   hour. Do not change the hour or `Rate.InstanceResetTime` through a live config
-   reload during this test. Raid setting changes themselves require restart.
+   The module preserves the saved anchor's exact hour. Raid setting changes
+   require restart; `.reload config` cannot change their active values.
 6. Start worldserver. Confirm the `mod-progression: raid resets every 3 days`
    log with anchor map 309 (or fallback 509) and the expected numeric next reset.
    Inspect startup logs for database errors before allowing players to connect.

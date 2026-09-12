@@ -111,8 +111,8 @@ Apply the patch once, rebuild the server, and restart. Do not reapply it on each
 module update. Check compatibility after updating the core.
 
 Days must be 1..365 (invalid values use 3). Raid periods override the core's
-`Rate.InstanceResetTime` scaling. Keep `Instance.ResetTimeHour` unchanged during
-migration so subsequent resets retain the same hour as your saved ZG schedule.
+`Rate.InstanceResetTime` scaling. Existing calendars retain their saved reset
+hour; `Instance.ResetTimeHour` is used when bootstrapping a missing calendar.
 Raid settings are startup-only: `.reload config` warns about changed values and
 keeps the running calendar intact until restart.
 
