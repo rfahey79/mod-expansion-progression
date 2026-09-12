@@ -41,6 +41,11 @@ honors the core's existing extension flag. The runtime hook then schedules the
 next reset on the shared calendar, even when the old due time was off-calendar.
 Test downtime and extended binds on your actual core before relying on them.
 
+The patch also retains the current queue iterator when removing a processed
+event. A reset shortly before the shared boundary can insert missed warnings
+ahead of that event; erasing the queue's new first element could otherwise repeat
+the reset. The normal warning/reset sequence is preserved.
+
 ## Install on the existing VM
 
 1. Record `.instance listbinds` on the MC test character and run the read-only
@@ -122,10 +127,12 @@ dungeons, invalid/custom settings, reload protection, anchor selection, bootstra
 calendar boundaries and the core recurrence formula. Bind persistence and in-game
 behavior require the VM acceptance steps above; the tests do not run a live realm.
 The optional `PROGRESSION_CORE_SOURCE` CMake option extracts and executes the
-patched core's actual `LoadResetTimes` function against database/event-storage
+patched core's actual `LoadResetTimes` and `Update` functions against database/event-storage
 doubles. It verifies cached and persisted MC expiry, missing raid rows, restart
 stability, immediate overdue reset events, and unchanged overdue dungeon/disabled
-behavior. The GitHub workflow runs this against both pinned upstream and Playerbots
+behavior. A queue regression fixture verifies one overdue reset and the correct
+remaining warning when restarting ten minutes before the next reset. The GitHub
+workflow runs this against both pinned upstream and Playerbots
 cores, then compiles the module and modified core files against real headers.
 See its run results for the exact revision tested.
 

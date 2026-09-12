@@ -54,13 +54,27 @@ struct Saves
 {
     std::map<std::pair<uint32, uint32>, time_t> times;
     std::map<std::pair<uint32, uint32>, time_t> extended;
-    std::vector<std::pair<time_t, InstResetEvent>> events;
+    std::multimap<time_t, InstResetEvent> m_resetTimeQueue;
+    uint32 resets = 0;
+    uint32 warnings = 0;
+    time_t testNextReset = 0;
     static inline uint16 ResetTimeDelay[] = {3600, 900, 300, 60, 0};
     time_t GetResetTimeFor(uint32 id, Difficulty d) { return times[{id, uint32(d)}]; }
     void SetResetTimeFor(uint32 id, Difficulty d, time_t t) { times[{id, uint32(d)}] = t; }
     void SetExtendedResetTimeFor(uint32 id, Difficulty d, time_t t) { extended[{id, uint32(d)}] = t; }
-    void ScheduleReset(time_t t, InstResetEvent e) { events.emplace_back(t, e); }
+    void ScheduleReset(time_t t, InstResetEvent e) { m_resetTimeQueue.emplace(t, e); }
     void LoadResetTimes();
+    void Update();
+    void _ResetOrWarnAll(uint32 id, Difficulty d, bool warn, time_t)
+    {
+        if (warn) ++warnings;
+        else
+        {
+            ++resets;
+            SetResetTimeFor(id, d, testNextReset);
+            ScheduleReset(testNextReset - 3600, InstResetEvent(1, id, d));
+        }
+    }
 } saves;
 using InstanceSaveMgr = Saves;
 inline Saves* sInstanceSaveMgr = &saves;

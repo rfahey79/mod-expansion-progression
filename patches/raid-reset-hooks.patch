@@ -1,5 +1,5 @@
 diff --git a/src/server/game/Instances/InstanceSaveMgr.cpp b/src/server/game/Instances/InstanceSaveMgr.cpp
-index 14ce15f..4757c27 100644
+index 14ce15f..9a40c3a 100644
 --- a/src/server/game/Instances/InstanceSaveMgr.cpp
 +++ b/src/server/game/Instances/InstanceSaveMgr.cpp
 @@ -342,10 +342,24 @@ void InstanceSaveMgr::LoadResetTimes()
@@ -42,7 +42,32 @@ index 14ce15f..4757c27 100644
          // schedule the global reset/warning
          uint8 type;
          for (type = 1; type < 5; ++type)
-@@ -735,17 +757,19 @@ void InstanceSaveMgr::_ResetOrWarnAll(uint32 mapid, Difficulty difficulty, bool
+@@ -622,11 +644,12 @@ void InstanceSaveMgr::Update()
+ 
+     while (!m_resetTimeQueue.empty())
+     {
+-        t = m_resetTimeQueue.begin()->first;
++        auto const eventItr = m_resetTimeQueue.begin();
++        t = eventItr->first;
+         if (t >= now)
+             break;
+ 
+-        InstResetEvent& event = m_resetTimeQueue.begin()->second;
++        InstResetEvent& event = eventItr->second;
+         if (event.type)
+         {
+             // global reset/warning for a certain map
+@@ -642,7 +665,8 @@ void InstanceSaveMgr::Update()
+             else
+                 resetOccurred = true;
+         }
+-        m_resetTimeQueue.erase(m_resetTimeQueue.begin());
++        // Reset callbacks may insert overdue warnings before this event.
++        m_resetTimeQueue.erase(eventItr);
+     }
+ 
+     // pussywizard: send updated calendar and raid info
+@@ -735,17 +759,19 @@ void InstanceSaveMgr::_ResetOrWarnAll(uint32 mapid, Difficulty difficulty, bool
          uint32 diff = sWorld->getIntConfig(CONFIG_INSTANCE_RESET_TIME_HOUR) * HOUR;
  
          uint32 period = uint32(((mapDiff->resetTime * sWorld->getRate(RATE_INSTANCE_RESET_TIME)) / DAY) * DAY);

@@ -53,7 +53,22 @@ struct Database
     }
 } CharacterDatabase;
 WorldScript* sScriptMgr;
+struct WorldPacket { };
+struct Player { void SendRaidInfo() { } };
+struct WorldSession
+{
+    Player* GetPlayer() { return nullptr; }
+    void HandleCalendarGetCalendar(WorldPacket&) { }
+};
+struct WorldSessionMgr
+{
+    using SessionMap = std::map<int, WorldSession*>;
+    SessionMap sessions;
+    SessionMap const& GetAllSessions() { return sessions; }
+} sessionMgr;
+WorldSessionMgr* sWorldSessionMgr = &sessionMgr;
 #include "core-load-reset-times.inc"
+#include "core-reset-update.inc"
 void Check(bool ok, char const* message)
 {
     if (!ok) { std::cerr << message << '\n'; std::exit(1); }
@@ -76,9 +91,9 @@ int main()
     Check(CharacterDatabase.times[{409, 0}] == anchor, "Real core must persist MC global expiry");
     Check(saves.GetResetTimeFor(469, Normal) == anchor, "Missing raid row must get shared expiry");
     Check(CharacterDatabase.times[{469, 0}] == anchor, "Missing raid row must be inserted");
-    for (auto const& event : saves.events)
+    for (auto const& event : saves.m_resetTimeQueue)
         Check(event.first == anchor - HOUR && event.second.type == 1, "Future schedules must have one normal warning event");
-    Check(saves.events.size() == 5, "Only one event per map/difficulty");
+    Check(saves.m_resetTimeQueue.size() == 5, "Only one event per map/difficulty");
     // Reconstruct manager/module just as a restart does; persisted times survive.
     saves = {};
     ProgressionRaidResetScript restart;
@@ -97,7 +112,7 @@ int main()
     saves.LoadResetTimes();
     Check(saves.GetResetTimeFor(409, Normal) == now - 2 * DAY, "Overdue bind must not be revived");
     Check(CharacterDatabase.times[{409, 0}] == anchor, "Overdue map persists next shared reset");
-    for (auto const& event : saves.events)
+    for (auto const& event : saves.m_resetTimeQueue)
         if (event.second.mapid == 409)
             Check(event.first < now && event.second.type == 5, "Overdue raid must queue normal reset immediately");
         else if (event.second.mapid == 36)
@@ -109,8 +124,20 @@ int main()
     disabled.OnAfterConfigLoad(false);
     sScriptMgr = &disabled;
     saves.LoadResetTimes();
-    for (auto const& event : saves.events)
+    for (auto const& event : saves.m_resetTimeQueue)
         if (event.second.mapid == 409)
             Check(event.second.type != 5, "Disabled override must keep stock overdue behavior");
     std::cout << "Actual core LoadResetTimes migration tests passed\n";
+    // An immediate overdue reset shortly before the shared boundary inserts
+    // already-due warning events BEFORE the current queue iterator.
+    saves = {};
+    saves.testNextReset = now + 10 * 60;
+    saves.SetResetTimeFor(409, Normal, now - DAY);
+    saves.ScheduleReset(now - 1, InstResetEvent(5, 409, Normal));
+    saves.Update();
+    Check(saves.resets == 1, "An overdue reset must execute only once");
+    Check(saves.warnings == 2, "Catch up one-hour and 15-minute warnings once each");
+    Check(saves.m_resetTimeQueue.size() == 1 && saves.m_resetTimeQueue.begin()->first == now + 5 * 60,
+        "The next five-minute warning must remain queued");
+    std::cout << "Actual core queue insertion regression passed\n";
 }
