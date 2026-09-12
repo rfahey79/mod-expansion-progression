@@ -6,6 +6,8 @@
 #include <vector>
 using uint32 = std::uint32_t;
 using uint64 = std::uint64_t;
+using uint8 = std::uint8_t;
+using uint16 = std::uint16_t;
 constexpr uint32 HOUR = 3600;
 enum Difficulty { Normal = 0 };
 enum { WORLDHOOK_ON_AFTER_CONFIG_LOAD, WORLDHOOK_ON_INSTANCE_RESET_PERIOD, WORLDHOOK_ON_INSTANCE_RESET_SCHEDULE };
@@ -16,7 +18,7 @@ public:
     WorldScript(char const*, std::vector<int>) { }
     virtual void OnAfterConfigLoad(bool) { }
     virtual void OnInstanceResetPeriod(uint32, uint32, uint32&) { }
-    virtual void OnInstanceResetSchedule(uint32, uint32, time_t&) { }
+    virtual void OnInstanceResetSchedule(uint32, uint32, time_t&, bool) { }
 };
 struct Config
 {
@@ -41,11 +43,26 @@ struct MapStore
         return it == entries.end() ? nullptr : &it->second;
     }
 } sMapStore;
+struct InstResetEvent
+{
+    uint8 type;
+    uint32 mapid;
+    Difficulty difficulty;
+    InstResetEvent(uint8 t, uint32 m, Difficulty d) : type(t), mapid(m), difficulty(d) { }
+};
 struct Saves
 {
     std::map<std::pair<uint32, uint32>, time_t> times;
+    std::map<std::pair<uint32, uint32>, time_t> extended;
+    std::vector<std::pair<time_t, InstResetEvent>> events;
+    static inline uint16 ResetTimeDelay[] = {3600, 900, 300, 60, 0};
     time_t GetResetTimeFor(uint32 id, Difficulty d) { return times[{id, uint32(d)}]; }
+    void SetResetTimeFor(uint32 id, Difficulty d, time_t t) { times[{id, uint32(d)}] = t; }
+    void SetExtendedResetTimeFor(uint32 id, Difficulty d, time_t t) { extended[{id, uint32(d)}] = t; }
+    void ScheduleReset(time_t t, InstResetEvent e) { events.emplace_back(t, e); }
+    void LoadResetTimes();
 } saves;
+using InstanceSaveMgr = Saves;
 inline Saves* sInstanceSaveMgr = &saves;
 namespace GameTime
 {
@@ -53,7 +70,12 @@ inline time_t now;
 struct Value { time_t count() const { return now; } };
 inline Value GetGameTime() { return {}; }
 }
-struct World { uint32 getIntConfig(int) { return 4; } } world;
+struct World
+{
+    uint32 getIntConfig(int) { return 4; }
+    float rate = 1.0f;
+    float getRate(int) { return rate; }
+} world;
 inline World* sWorld = &world;
 #define LOG_INFO(...) ((void)0)
 #define LOG_WARN(...) ((void)0)

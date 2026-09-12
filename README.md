@@ -105,6 +105,8 @@ The hook patch is required even when the override is disabled; compilation fails
 if the hooks are missing. It adds two generic WorldScript hooks and calls them at
 startup and recurring reset scheduling. All raid-specific policy stays in the
 module; the core's warning queue, reset execution and extension logic remain in use.
+Migrated overdue calendars queue a normal reset after binds load, so old expired
+binds are not revived until the next shared reset.
 Apply the patch once, rebuild the server, and restart. Do not reapply it on each
 module update. Check compatibility after updating the core.
 

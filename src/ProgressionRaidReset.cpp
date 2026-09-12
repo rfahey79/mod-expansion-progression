@@ -39,12 +39,12 @@ public:
             period = _days * Progression::RaidReset::Day;
     }
 
-    void OnInstanceResetSchedule(uint32 mapId, uint32 /*difficulty*/, time_t& resetTime) override
+    void OnInstanceResetSchedule(uint32 mapId, uint32 /*difficulty*/, time_t& resetTime, bool loading) override
     {
         if (!_enabled)
             return;
 
-        // This hook runs after ALL persisted schedules load, but before any
+        // At startup this hook runs after ALL persisted schedules load, before any
         // InstanceSave, bind, or reset event is created. Snapshot anchors once
         // so iteration order cannot change the selected calendar.
         if (!_anchorLoaded)
@@ -74,7 +74,8 @@ public:
             }
         }
         if (_anchor && IsRaid(mapId))
-            resetTime = _anchor;
+            resetTime = loading ? _anchor : Progression::RaidReset::NextReset(
+                _anchor, GameTime::GetGameTime().count() + 1, _days * Progression::RaidReset::Day);
     }
 
 private:

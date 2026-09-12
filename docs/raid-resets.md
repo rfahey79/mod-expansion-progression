@@ -19,21 +19,24 @@ Two generic hooks are added by `patches/raid-reset-hooks.patch`:
 
 - `OnInstanceResetPeriod`: called in startup and recurring reset calculations.
 - `OnInstanceResetSchedule`: called after all persisted global times load and
-  before reset events, instance saves and character binds are loaded.
+  before reset events, instance saves and character binds are loaded; also called
+  when scheduling the next reset, with `loading = false`.
 
 The second hook supplies the shared timestamp. The patch persists changed values
 to `characters.instance_reset` with a map/difficulty upsert. For future existing
 resets, it also changes the manager's cached timestamp before `AddInstanceSave`.
 This is the migration step that changing only the period would miss.
 
-No schema change or manual migration SQL is needed. No `instance` or
-`character_instance` rows are rewritten by this feature. Stock raid
+No schema change or manual migration SQL is needed. For active future binds, no
+`instance` or `character_instance` rows are rewritten by this feature. Stock raid
 `instance.resettime` remains zero; it is not the effective raid expiry. Instance
 30's identity, permanent bind, encounter data and respawn records are preserved.
-The patch leaves already-expired cached timestamps expired rather than reviving
-old binds. Core offline-expiration and bind-extension behavior remain core-owned;
-this is not a fix for the core's reported offline reset issues. In particular,
-test downtime and extended binds on your actual core before relying on them.
+The patch leaves already-expired cached timestamps expired and queues the normal
+core reset path for the first world update after binds load. This prevents
+reviving overdue binds during migration. That path clears ordinary binds and
+honors the core's existing extension flag. The runtime hook then schedules the
+next reset on the shared calendar, even when the old due time was off-calendar.
+Test downtime and extended binds on your actual core before relying on them.
 
 ## Install on the existing VM
 
@@ -98,7 +101,8 @@ test downtime and extended binds on your actual core before relying on them.
 6. On an expendable character, test an explicitly extended bind through a reset
    and a restart. The module does not clear the extension flag or replace the
    core's extension rules. Also test a reset that occurs while the VM is stopped;
-   that follows your core's existing offline-reset behavior.
+   migrated overdue binds should process through the normal core reset on the
+   first world update, with the next reset on the shared calendar.
 
 ## Disabling and rollback
 
@@ -116,8 +120,13 @@ They cover the MC-30 migration/new-bind model, all raid difficulties, unaffected
 dungeons, invalid/custom settings, reload protection, anchor selection, bootstrap,
 calendar boundaries and the core recurrence formula. Bind persistence and in-game
 behavior require the VM acceptance steps above; the tests do not run a live realm.
-The GitHub workflow applies the patch and compiles against pinned upstream and
-Playerbots cores. See its run results for the exact revision tested.
+The optional `PROGRESSION_CORE_SOURCE` CMake option extracts and executes the
+patched core's actual `LoadResetTimes` function against database/event-storage
+doubles. It verifies cached and persisted MC expiry, missing raid rows, restart
+stability, immediate overdue reset events, and unchanged overdue dungeon/disabled
+behavior. The GitHub workflow runs this against both pinned upstream and Playerbots
+cores, then compiles the module and modified core files against real headers.
+See its run results for the exact revision tested.
 
 Source/schema references: [global reset table](https://www.azerothcore.org/wiki/instance_reset),
 [instance table](https://www.azerothcore.org/wiki/instance),

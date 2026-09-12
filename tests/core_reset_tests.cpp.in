@@ -1,0 +1,116 @@
+// The actual patched core LoadResetTimes is extracted by CMake, not copied here.
+#include "ProgressionRaidReset.cpp"
+#include <array>
+#include <memory>
+#include <cstdlib>
+#include <iostream>
+constexpr uint32 DAY = 86400;
+constexpr int RATE_INSTANCE_RESET_TIME = 0;
+uint32 PAIR32_LOPART(uint32 key) { return key & 0xffff; }
+uint32 PAIR32_HIPART(uint32 key) { return key >> 16; }
+struct MapDifficulty { uint32 resetTime; };
+using MapDifficultyMap = std::map<uint32, MapDifficulty>;
+MapDifficultyMap sMapDifficultyMap;
+MapDifficulty const* GetMapDifficultyData(uint32 id, Difficulty d)
+{
+    auto it = sMapDifficultyMap.find(id | (uint32(d) << 16));
+    return it == sMapDifficultyMap.end() ? nullptr : &it->second;
+}
+struct Field
+{
+    uint32 value;
+    template<class T> T Get() const { return static_cast<T>(value); }
+};
+struct Result
+{
+    std::vector<std::array<Field, 3>> rows;
+    size_t index = 0;
+    Field* Fetch() { return rows[index].data(); }
+    bool NextRow() { return ++index < rows.size(); }
+};
+using QueryResult = std::shared_ptr<Result>;
+struct Database
+{
+    std::map<std::pair<uint32, uint32>, time_t> times;
+    QueryResult Query(char const*)
+    {
+        if (times.empty()) return {};
+        auto result = std::make_shared<Result>();
+        for (auto const& row : times)
+            result->rows.push_back({Field{row.first.first}, Field{row.first.second}, Field{uint32(row.second)}});
+        return result;
+    }
+    template<class A, class B> void DirectExecute(char const*, A map, B diff)
+    {
+        times.erase({uint32(map), uint32(diff)});
+    }
+    template<class A, class B, class C> void DirectExecute(char const* sql, A a, B b, C c)
+    {
+        if (std::string(sql).find("UPDATE instance_reset SET") == 0)
+            times[{uint32(b), uint32(c)}] = time_t(a);
+        else
+            times[{uint32(a), uint32(b)}] = time_t(c);
+    }
+} CharacterDatabase;
+WorldScript* sScriptMgr;
+#include "core-load-reset-times.inc"
+void Check(bool ok, char const* message)
+{
+    if (!ok) { std::cerr << message << '\n'; std::exit(1); }
+}
+int main()
+{
+    time_t const now = 20000LL * DAY + 12 * HOUR;
+    time_t const anchor = 20001LL * DAY + 4 * HOUR;
+    GameTime::now = now;
+    sMapStore.entries = {{309, {true}}, {509, {true}}, {409, {true}}, {469, {true}}, {36, {false}}};
+    sMapDifficultyMap = {{309, {3 * DAY}}, {509, {3 * DAY}}, {409, {7 * DAY}},
+        {469, {7 * DAY}}, {36 | (1 << 16), {DAY}}};
+    CharacterDatabase.times = {{{309, 0}, anchor}, {{509, 0}, anchor},
+        {{409, 0}, now + 7 * DAY}, {{36, 1}, anchor}};
+    ProgressionRaidResetScript script;
+    script.OnAfterConfigLoad(false);
+    sScriptMgr = &script;
+    saves.LoadResetTimes();
+    Check(saves.GetResetTimeFor(409, Normal) == anchor, "Real core must migrate cached MC expiry before bind loading");
+    Check(CharacterDatabase.times[{409, 0}] == anchor, "Real core must persist MC global expiry");
+    Check(saves.GetResetTimeFor(469, Normal) == anchor, "Missing raid row must get shared expiry");
+    Check(CharacterDatabase.times[{469, 0}] == anchor, "Missing raid row must be inserted");
+    for (auto const& event : saves.events)
+        Check(event.first == anchor - HOUR && event.second.type == 1, "Future schedules must have one normal warning event");
+    Check(saves.events.size() == 5, "Only one event per map/difficulty");
+    // Reconstruct manager/module just as a restart does; persisted times survive.
+    saves = {};
+    ProgressionRaidResetScript restart;
+    restart.OnAfterConfigLoad(false);
+    sScriptMgr = &restart;
+    saves.LoadResetTimes();
+    Check(saves.GetResetTimeFor(409, Normal) == anchor, "Restart must not extend MC expiry");
+    // Both a raid and a heroic dungeon expired during downtime. Only the migrated
+    // raid should use the new immediate-reset branch; dungeon semantics stay stock.
+    CharacterDatabase.times[{409, 0}] = now - 2 * DAY;
+    CharacterDatabase.times[{36, 1}] = now - 2 * DAY;
+    saves = {};
+    ProgressionRaidResetScript expired;
+    expired.OnAfterConfigLoad(false);
+    sScriptMgr = &expired;
+    saves.LoadResetTimes();
+    Check(saves.GetResetTimeFor(409, Normal) == now - 2 * DAY, "Overdue bind must not be revived");
+    Check(CharacterDatabase.times[{409, 0}] == anchor, "Overdue map persists next shared reset");
+    for (auto const& event : saves.events)
+        if (event.second.mapid == 409)
+            Check(event.first < now && event.second.type == 5, "Overdue raid must queue normal reset immediately");
+        else if (event.second.mapid == 36)
+            Check(event.second.type != 5, "Do not alter core's expired dungeon behavior");
+    config.enabled = false;
+    CharacterDatabase.times[{409, 0}] = now - 2 * DAY;
+    saves = {};
+    ProgressionRaidResetScript disabled;
+    disabled.OnAfterConfigLoad(false);
+    sScriptMgr = &disabled;
+    saves.LoadResetTimes();
+    for (auto const& event : saves.events)
+        if (event.second.mapid == 409)
+            Check(event.second.type != 5, "Disabled override must keep stock overdue behavior");
+    std::cout << "Actual core LoadResetTimes migration tests passed\n";
+}

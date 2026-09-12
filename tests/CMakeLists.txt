@@ -23,3 +23,22 @@ add_executable(raid_reset_tests "${CMAKE_CURRENT_BINARY_DIR}/raid-stubs/raid_res
 target_compile_features(raid_reset_tests PRIVATE cxx_std_17)
 target_include_directories(raid_reset_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/raid-stubs" "${CMAKE_CURRENT_SOURCE_DIR}/../src")
 add_test(NAME raid_reset_behavior COMMAND raid_reset_tests)
+
+# Optional integration test executes the selected core's actual startup scheduler.
+# CI supplies each supported patched core. Database and event storage are doubles.
+if(PROGRESSION_CORE_SOURCE)
+    file(READ "${PROGRESSION_CORE_SOURCE}/src/server/game/Instances/InstanceSaveMgr.cpp" reset_source)
+    string(FIND "${reset_source}" "void InstanceSaveMgr::LoadResetTimes()" reset_start)
+    string(FIND "${reset_source}" "void InstanceSaveMgr::LoadInstanceSaves()" reset_end)
+    if(reset_start LESS 0 OR reset_end LESS reset_start)
+        message(FATAL_ERROR "Cannot locate core reset loader for integration test")
+    endif()
+    math(EXPR reset_length "${reset_end} - ${reset_start}")
+    string(SUBSTRING "${reset_source}" ${reset_start} ${reset_length} reset_loader)
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/raid-stubs/core-load-reset-times.inc" "${reset_loader}")
+    configure_file(core_reset_tests.cpp.in raid-stubs/core_reset_tests.cpp COPYONLY)
+    add_executable(core_reset_tests "${CMAKE_CURRENT_BINARY_DIR}/raid-stubs/core_reset_tests.cpp")
+    target_compile_features(core_reset_tests PRIVATE cxx_std_17)
+    target_include_directories(core_reset_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/raid-stubs" "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+    add_test(NAME core_reset_migration COMMAND core_reset_tests)
+endif()

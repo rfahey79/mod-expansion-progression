@@ -49,6 +49,11 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release -DTOOLS_BUILD=none -DSCRIPTS=none
           -DMODULES=static -DUSE_COREPCH=OFF -DUSE_SCRIPTPCH=OFF
           -DBUILD_TESTING=OFF
+      - name: Test actual core reset loader with migration fixtures
+        run: |
+          cmake -S core/modules/mod-progression -B reset-tests -DPROGRESSION_CORE_SOURCE="$PWD/core"
+          cmake --build reset-tests --parallel 2
+          ctest --test-dir reset-tests --output-on-failure
       - name: Compile module and generated loader against real headers
         run: cmake --build core-build --target modules --parallel 2
       - name: Compile modified core source files

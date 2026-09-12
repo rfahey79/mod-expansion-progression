@@ -1,8 +1,8 @@
 diff --git a/src/server/game/Instances/InstanceSaveMgr.cpp b/src/server/game/Instances/InstanceSaveMgr.cpp
-index 14ce15f..221bf49 100644
+index 14ce15f..4757c27 100644
 --- a/src/server/game/Instances/InstanceSaveMgr.cpp
 +++ b/src/server/game/Instances/InstanceSaveMgr.cpp
-@@ -342,10 +342,23 @@ void InstanceSaveMgr::LoadResetTimes()
+@@ -342,10 +342,24 @@ void InstanceSaveMgr::LoadResetTimes()
  
          // the reset_delay must be at least one day
          uint32 period = uint32(((mapDiff->resetTime * sWorld->getRate(RATE_INSTANCE_RESET_TIME)) / DAY) * DAY);
@@ -12,8 +12,9 @@ index 14ce15f..221bf49 100644
  
          time_t t = GetResetTimeFor(mapid, difficulty);
 +        time_t const originalResetTime = t;
-+        sScriptMgr->OnInstanceResetSchedule(mapid, difficulty, t);
-+        if (t > 0 && t != originalResetTime)
++        sScriptMgr->OnInstanceResetSchedule(mapid, difficulty, t, true);
++        bool const scheduleOverridden = t > 0 && t != originalResetTime;
++        if (scheduleOverridden)
 +        {
 +            // Keep expired saves expired, matching the core's startup handling.
 +            // Future/new saves inherit the migrated calendar before binds load.
@@ -26,7 +27,22 @@ index 14ce15f..221bf49 100644
          if (!t)
          {
              // initialize the reset time
-@@ -735,6 +748,7 @@ void InstanceSaveMgr::_ResetOrWarnAll(uint32 mapid, Difficulty difficulty, bool
+@@ -365,6 +379,14 @@ void InstanceSaveMgr::LoadResetTimes()
+ 
+         SetExtendedResetTimeFor(mapid, difficulty, t);
+ 
++        // A module migrated an already-due calendar. Reset its loaded binds
++        // through the normal reset path on the first world update, not next cycle.
++        if (scheduleOverridden && originalResetTime && originalResetTime <= now)
++        {
++            ScheduleReset(now - 1, InstResetEvent(5, mapid, difficulty));
++            continue;
++        }
++
+         // schedule the global reset/warning
+         uint8 type;
+         for (type = 1; type < 5; ++type)
+@@ -735,17 +757,19 @@ void InstanceSaveMgr::_ResetOrWarnAll(uint32 mapid, Difficulty difficulty, bool
          uint32 diff = sWorld->getIntConfig(CONFIG_INSTANCE_RESET_TIME_HOUR) * HOUR;
  
          uint32 period = uint32(((mapDiff->resetTime * sWorld->getRate(RATE_INSTANCE_RESET_TIME)) / DAY) * DAY);
@@ -34,8 +50,22 @@ index 14ce15f..221bf49 100644
          if (period < DAY)
              period = DAY;
  
+-        uint32 next_reset = uint32(((resetTime + MINUTE) / DAY * DAY) + period + diff);
++        time_t next_reset = ((resetTime + MINUTE) / DAY * DAY) + period + diff;
++        sScriptMgr->OnInstanceResetSchedule(mapid, difficulty, next_reset, false);
+         SetResetTimeFor(mapid, difficulty, next_reset);
+         SetExtendedResetTimeFor(mapid, difficulty, next_reset + period);
+         ScheduleReset(time_t(next_reset - 3600), InstResetEvent(1, mapid, difficulty));
+ 
+         // update it in the DB
+         CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_GLOBAL_INSTANCE_RESETTIME);
+-        stmt->SetData(0, next_reset);
++        stmt->SetData(0, uint32(next_reset));
+         stmt->SetData(1, uint16(mapid));
+         stmt->SetData(2, uint8(difficulty));
+         CharacterDatabase.Execute(stmt);
 diff --git a/src/server/game/Scripting/ScriptDefines/WorldScript.cpp b/src/server/game/Scripting/ScriptDefines/WorldScript.cpp
-index 94c93ed..dcb420b 100644
+index 94c93ed..b86dfa8 100644
 --- a/src/server/game/Scripting/ScriptDefines/WorldScript.cpp
 +++ b/src/server/game/Scripting/ScriptDefines/WorldScript.cpp
 @@ -96,3 +96,15 @@ WorldScript::WorldScript(char const* name, std::vector<uint16> enabledHooks)
@@ -49,13 +79,13 @@ index 94c93ed..dcb420b 100644
 +        script->OnInstanceResetPeriod(mapId, difficulty, period));
 +}
 +
-+void ScriptMgr::OnInstanceResetSchedule(uint32 mapId, uint32 difficulty, time_t& resetTime)
++void ScriptMgr::OnInstanceResetSchedule(uint32 mapId, uint32 difficulty, time_t& resetTime, bool loading)
 +{
 +    CALL_ENABLED_HOOKS(WorldScript, WORLDHOOK_ON_INSTANCE_RESET_SCHEDULE,
-+        script->OnInstanceResetSchedule(mapId, difficulty, resetTime));
++        script->OnInstanceResetSchedule(mapId, difficulty, resetTime, loading));
 +}
 diff --git a/src/server/game/Scripting/ScriptDefines/WorldScript.h b/src/server/game/Scripting/ScriptDefines/WorldScript.h
-index f5a51b8..9023394 100644
+index f5a51b8..580fb1a 100644
 --- a/src/server/game/Scripting/ScriptDefines/WorldScript.h
 +++ b/src/server/game/Scripting/ScriptDefines/WorldScript.h
 @@ -37,6 +37,8 @@ enum WorldHook
@@ -74,14 +104,14 @@ index f5a51b8..9023394 100644
 +    // After the core rate is applied, before scheduling startup or subsequent resets.
 +    virtual void OnInstanceResetPeriod(uint32 /*mapId*/, uint32 /*difficulty*/, uint32& /*period*/) { }
 +
-+    // All global times are loaded; no saves/binds/events have been created yet.
-+    virtual void OnInstanceResetSchedule(uint32 /*mapId*/, uint32 /*difficulty*/, time_t& /*resetTime*/) { }
++    // On load: all global times are loaded, before saves/binds/events. Also called for subsequent resets.
++    virtual void OnInstanceResetSchedule(uint32 /*mapId*/, uint32 /*difficulty*/, time_t& /*resetTime*/, bool /*loading*/) { }
 +
      // Called before the world configuration is (re)loaded.
      virtual void OnBeforeConfigLoad(bool /*reload*/) { }
  
 diff --git a/src/server/game/Scripting/ScriptMgr.h b/src/server/game/Scripting/ScriptMgr.h
-index 4b1e970..b7465fc 100644
+index 4b1e970..64c39f7 100644
 --- a/src/server/game/Scripting/ScriptMgr.h
 +++ b/src/server/game/Scripting/ScriptMgr.h
 @@ -163,6 +163,8 @@ public: /* ServerScript */
@@ -89,7 +119,7 @@ index 4b1e970..b7465fc 100644
  public: /* WorldScript */
      void OnLoadCustomDatabaseTable();
 +    void OnInstanceResetPeriod(uint32 mapId, uint32 difficulty, uint32& period);
-+    void OnInstanceResetSchedule(uint32 mapId, uint32 difficulty, time_t& resetTime);
++    void OnInstanceResetSchedule(uint32 mapId, uint32 difficulty, time_t& resetTime, bool loading);
      void OnOpenStateChange(bool open);
      void OnBeforeConfigLoad(bool reload);
      void OnAfterConfigLoad(bool reload);
