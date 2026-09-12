@@ -1,0 +1,96 @@
+// Exercise the actual module hooks; bind loading/recurrence below are core models.
+#include "ProgressionRaidReset.cpp"
+#include <cstdlib>
+#include <iostream>
+void Check(bool condition, char const* message)
+{
+    if (!condition) { std::cerr << message << '\n'; std::exit(1); }
+}
+int main()
+{
+    constexpr time_t day = 86400;
+    GameTime::now = 20000 * day + 12 * HOUR;
+    time_t const anchor = 20001 * day + 4 * HOUR;
+    sMapStore.entries = {{309, {true}}, {509, {true}}, {409, {true}}, {249, {true}},
+        {469, {true}}, {531, {true}}, {631, {true}}, {36, {false}}};
+    saves.times = {{{309, 0}, anchor}, {{509, 0}, anchor}, {{409, 0}, GameTime::now + 7 * day}};
+    ProgressionRaidResetScript script;
+    script.OnAfterConfigLoad(false);
+    uint32 period = 7 * day;
+    script.OnInstanceResetPeriod(409, 0, period);
+    Check(period == 3 * day, "MC period must be three days");
+    time_t mc = saves.times[{409, 0}];
+    script.OnInstanceResetSchedule(409, 0, mc);
+    Check(mc == anchor, "Existing MC global timestamp must snap to ZG");
+    // Model the changed-time branch before LoadInstanceSaves/AddInstanceSave.
+    saves.times[{409, 0}] = mc;
+    struct Bind { uint32 map, instance, difficulty; bool permanent, canReset; time_t reset; };
+    Bind existing{409, 30, 0, true, false, saves.GetResetTimeFor(409, Normal)};
+    Bind fresh{409, 31, 0, true, false, saves.GetResetTimeFor(409, Normal)};
+    Check(existing.instance == 30 && existing.permanent && !existing.canReset && existing.reset == anchor,
+        "Migration must preserve MC instance 30 and permanent bind");
+    Check(fresh.reset == existing.reset, "New bind must use the same global expiry");
+    Check(existing.reset - GameTime::now < day, "Wednesday run may reset Thursday morning");
+    for (uint32 map : {249u, 469u, 531u, 631u})
+        for (uint32 diff = 0; diff < 4; ++diff)
+        {
+            time_t t = 0;
+            script.OnInstanceResetSchedule(map, diff, t);
+            Check(t == anchor, "All raid difficulties share calendar");
+        }
+    time_t dungeon = GameTime::now + day;
+    time_t const originalDungeon = dungeon;
+    period = day;
+    script.OnInstanceResetPeriod(36, 1, period);
+    script.OnInstanceResetSchedule(36, 1, dungeon);
+    Check(period == day && dungeon == originalDungeon, "Heroic dungeon unchanged");
+    script.OnInstanceResetPeriod(9999, 0, period);
+    Check(period == day, "Unknown map unchanged");
+    config.days = 5;
+    config.enabled = false;
+    script.OnAfterConfigLoad(true);
+    period = 7 * day;
+    script.OnInstanceResetPeriod(409, 0, period);
+    Check(period == 3 * day, "Reload cannot partially change schedule");
+    time_t next = ((anchor + 60) / day * day) + period + 4 * HOUR;
+    Check(next == anchor + 3 * day, "Core recurrence preserves calendar");
+    ProgressionRaidResetScript disabled;
+    disabled.OnAfterConfigLoad(false);
+    period = 7 * day;
+    mc = GameTime::now + period;
+    time_t original = mc;
+    disabled.OnInstanceResetPeriod(409, 0, period);
+    disabled.OnInstanceResetSchedule(409, 0, mc);
+    Check(period == 7 * day && mc == original, "Disabled preserves stock values");
+    config.enabled = true;
+    ProgressionRaidResetScript custom;
+    custom.OnAfterConfigLoad(false);
+    period = day;
+    custom.OnInstanceResetPeriod(409, 0, period);
+    Check(period == 5 * day, "Custom days override scaled core period");
+    for (int invalid : {0, -1, 366})
+        Check(Progression::RaidReset::ValidDays(invalid) == 3, "Invalid days default to three");
+    config.days = 3;
+    saves.times = {{{509, 0}, anchor}};
+    ProgressionRaidResetScript fallback;
+    fallback.OnAfterConfigLoad(false);
+    mc = 0;
+    fallback.OnInstanceResetSchedule(409, 0, mc);
+    Check(mc == anchor, "Missing ZG falls back to AQ20");
+    saves.times = {{{309, 0}, anchor}, {{509, 0}, anchor + day}};
+    ProgressionRaidResetScript conflict;
+    conflict.OnAfterConfigLoad(false);
+    mc = 0;
+    conflict.OnInstanceResetSchedule(509, 0, mc);
+    Check(mc == anchor, "Conflicting calendars prefer ZG");
+    saves.times.clear();
+    ProgressionRaidResetScript empty;
+    empty.OnAfterConfigLoad(false);
+    mc = 0;
+    empty.OnInstanceResetSchedule(409, 0, mc);
+    Check(mc == 20003 * day + 4 * HOUR, "Bootstrap uses core reset hour");
+    Check(Progression::RaidReset::NextReset(anchor, anchor, 3 * day) == anchor, "Exact boundary retained");
+    Check(Progression::RaidReset::NextReset(anchor, anchor + 1, 3 * day) == anchor + 3 * day, "Expired anchor advances whole cycles");
+    Check(Progression::RaidReset::NextReset(anchor, anchor + 9 * day, 3 * day) == anchor + 9 * day, "Long downtime preserves phase");
+    std::cout << "Raid reset hooks and migration model passed\n";
+}

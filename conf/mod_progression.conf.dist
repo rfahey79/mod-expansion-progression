@@ -6,6 +6,13 @@
 
 Progression.Enable = 1
 
+# Universal raid calendar, independent of the leveling cap enable switch.
+# Applies to all raid difficulties, including later expansions. ZG is the
+# preferred existing calendar; AQ20 is the fallback. Restart required.
+Progression.OverrideRaidReset = 1
+# Whole days, 1..365; invalid values use 3. Overrides Rate.InstanceResetTime for raids.
+Progression.RaidResetDays = 3
+
 # Allowed: 1..min(80, worldserver's original MaxPlayerLevel).
 # Invalid values log an error and fall back to min(60, original MaxPlayerLevel).
 # Suggested progression: 60 -> 70 -> 80.

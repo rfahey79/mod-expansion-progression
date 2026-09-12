@@ -3,8 +3,9 @@
 A configurable realm level cap for AzerothCore WotLK, independent of `Expansion`.
 Start at 60, then advance to 70 and 80 with a GM command. Keep `Expansion = 2`:
 Blood Elves, Draenei, Horde Paladins and Alliance Shamans retain their normal
-availability. No AzerothCore core files, database schema or race/class restrictions
-are changed.
+availability. Includes a configurable shared raid-reset calendar. The raid feature
+requires the small scheduling-hook patch below; database schema and race/class
+restrictions are unchanged.
 
 Repository: [rfahey79/mod-expansion-progression](https://github.com/rfahey79/mod-expansion-progression).
 The module supports either directory name, `mod-progression` or
@@ -45,6 +46,8 @@ Re-run your existing CMake configuration and rebuild/install the server. For a
 typical build directory (retain your usual install prefix and other options):
 
 ```sh
+git apply --check modules/mod-progression/patches/raid-reset-hooks.patch
+git apply modules/mod-progression/patches/raid-reset-hooks.patch
 cmake -S . -B build -DMODULES=static
 cmake --build build --parallel 2
 cmake --install build
@@ -78,6 +81,38 @@ Progression.LFG.RestrictSpecific = 1
 Restart `worldserver` after installing the module. Look for the
 `mod-progression: enabled=` startup log. Accounts must also have the expansion
 access normally required by your server; this module does not change account flags.
+
+## Universal raid resets
+
+Defaults are `Progression.OverrideRaidReset = 1` and `Progression.RaidResetDays = 3`.
+Every raid map/difficulty with a global reset uses one calendar, including Classic,
+TBC and Wrath raids. This setting is independent of `Progression.Enable` and the
+current level cap. Heroic and normal dungeon behavior is unchanged.
+
+A Wednesday-night run can be available again after Thursday's scheduled reset.
+The next reset is three days after that global reset, not three days after entry
+or a boss kill. ZG (309, difficulty 0) supplies the calendar; AQ20 (509, difficulty 0)
+is the fallback. If both exist but disagree, ZG wins and a warning records this.
+If neither exists, the module creates a shared calendar using the core reset hour.
+
+Read [raid reset deployment and verification](docs/raid-resets.md) before upgrading
+an existing server. Migration is automatic during startup: future global timestamps
+are aligned **before** existing saves/binds load. Your MC map 409 / instance 30 bind
+therefore gets the next ZG reset without changing its instance ID, permanent flag,
+encounter progress or respawns. No manual migration SQL is required.
+
+The hook patch is required even when the override is disabled; compilation fails
+if the hooks are missing. It adds two generic WorldScript hooks and calls them at
+startup and recurring reset scheduling. All raid-specific policy stays in the
+module; the core's warning queue, reset execution and extension logic remain in use.
+Apply the patch once, rebuild the server, and restart. Do not reapply it on each
+module update. Check compatibility after updating the core.
+
+Days must be 1..365 (invalid values use 3). Raid periods override the core's
+`Rate.InstanceResetTime` scaling. Keep `Instance.ResetTimeHour` unchanged during
+migration so subsequent resets retain the same hour as your saved ZG schedule.
+Raid settings are startup-only: `.reload config` warns about changed values and
+keeps the running calendar intact until restart.
 
 ## Commands and persistence
 
@@ -233,7 +268,8 @@ until AzerothCore loads complete level-stat and XP arrays. After startup, the
 effective core maximum follows the phase cap with a level-55 Death Knight safety
 floor. Player hooks enforce lower caps for ordinary characters and block Death
 Knights from advancing while that floor is active.
-It does not edit `worldserver.conf`, `Expansion`, account data or core source.
+It does not edit `worldserver.conf`, `Expansion` or account data. The raid feature
+uses the separately applied core hook patch described above.
 Player hooks veto XP and upward `GiveLevel` calls, expose the cap to the client,
 announce it and clear capped XP. Live transitions synchronize registered Player
 objects, including bots, through `ObjectAccessor` under its container lock.

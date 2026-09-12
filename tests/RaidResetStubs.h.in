@@ -1,0 +1,60 @@
+#pragma once
+#include <cstdint>
+#include <ctime>
+#include <map>
+#include <string>
+#include <vector>
+using uint32 = std::uint32_t;
+using uint64 = std::uint64_t;
+constexpr uint32 HOUR = 3600;
+enum Difficulty { Normal = 0 };
+enum { WORLDHOOK_ON_AFTER_CONFIG_LOAD, WORLDHOOK_ON_INSTANCE_RESET_PERIOD, WORLDHOOK_ON_INSTANCE_RESET_SCHEDULE };
+enum { CONFIG_INSTANCE_RESET_TIME_HOUR };
+class WorldScript
+{
+public:
+    WorldScript(char const*, std::vector<int>) { }
+    virtual void OnAfterConfigLoad(bool) { }
+    virtual void OnInstanceResetPeriod(uint32, uint32, uint32&) { }
+    virtual void OnInstanceResetSchedule(uint32, uint32, time_t&) { }
+};
+struct Config
+{
+    bool enabled = true;
+    int days = 3;
+    template<class T> T GetOption(char const* key, T fallback)
+    {
+        std::string name(key);
+        if (name == "Progression.OverrideRaidReset") return static_cast<T>(enabled);
+        if (name == "Progression.RaidResetDays") return static_cast<T>(days);
+        return fallback;
+    }
+} config;
+inline Config* sConfigMgr = &config;
+struct MapEntry { bool raid; bool IsRaid() const { return raid; } };
+struct MapStore
+{
+    std::map<uint32, MapEntry> entries;
+    MapEntry const* LookupEntry(uint32 id) const
+    {
+        auto it = entries.find(id);
+        return it == entries.end() ? nullptr : &it->second;
+    }
+} sMapStore;
+struct Saves
+{
+    std::map<std::pair<uint32, uint32>, time_t> times;
+    time_t GetResetTimeFor(uint32 id, Difficulty d) { return times[{id, uint32(d)}]; }
+} saves;
+inline Saves* sInstanceSaveMgr = &saves;
+namespace GameTime
+{
+inline time_t now;
+struct Value { time_t count() const { return now; } };
+inline Value GetGameTime() { return {}; }
+}
+struct World { uint32 getIntConfig(int) { return 4; } } world;
+inline World* sWorld = &world;
+#define LOG_INFO(...) ((void)0)
+#define LOG_WARN(...) ((void)0)
+#define LOG_ERROR(...) ((void)0)

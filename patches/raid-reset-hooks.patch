@@ -1,0 +1,95 @@
+diff --git a/src/server/game/Instances/InstanceSaveMgr.cpp b/src/server/game/Instances/InstanceSaveMgr.cpp
+index 14ce15f..221bf49 100644
+--- a/src/server/game/Instances/InstanceSaveMgr.cpp
++++ b/src/server/game/Instances/InstanceSaveMgr.cpp
+@@ -342,10 +342,23 @@ void InstanceSaveMgr::LoadResetTimes()
+ 
+         // the reset_delay must be at least one day
+         uint32 period = uint32(((mapDiff->resetTime * sWorld->getRate(RATE_INSTANCE_RESET_TIME)) / DAY) * DAY);
++        sScriptMgr->OnInstanceResetPeriod(mapid, difficulty, period);
+         if (period < DAY)
+             period = DAY;
+ 
+         time_t t = GetResetTimeFor(mapid, difficulty);
++        time_t const originalResetTime = t;
++        sScriptMgr->OnInstanceResetSchedule(mapid, difficulty, t);
++        if (t > 0 && t != originalResetTime)
++        {
++            // Keep expired saves expired, matching the core's startup handling.
++            // Future/new saves inherit the migrated calendar before binds load.
++            if (!originalResetTime || originalResetTime > now)
++                SetResetTimeFor(mapid, difficulty, t);
++            CharacterDatabase.DirectExecute(
++                "INSERT INTO instance_reset (mapid, difficulty, resettime) VALUES ({}, {}, {}) "
++                "ON DUPLICATE KEY UPDATE resettime = VALUES(resettime)", mapid, difficulty, uint32(t));
++        }
+         if (!t)
+         {
+             // initialize the reset time
+@@ -735,6 +748,7 @@ void InstanceSaveMgr::_ResetOrWarnAll(uint32 mapid, Difficulty difficulty, bool
+         uint32 diff = sWorld->getIntConfig(CONFIG_INSTANCE_RESET_TIME_HOUR) * HOUR;
+ 
+         uint32 period = uint32(((mapDiff->resetTime * sWorld->getRate(RATE_INSTANCE_RESET_TIME)) / DAY) * DAY);
++        sScriptMgr->OnInstanceResetPeriod(mapid, difficulty, period);
+         if (period < DAY)
+             period = DAY;
+ 
+diff --git a/src/server/game/Scripting/ScriptDefines/WorldScript.cpp b/src/server/game/Scripting/ScriptDefines/WorldScript.cpp
+index 94c93ed..dcb420b 100644
+--- a/src/server/game/Scripting/ScriptDefines/WorldScript.cpp
++++ b/src/server/game/Scripting/ScriptDefines/WorldScript.cpp
+@@ -96,3 +96,15 @@ WorldScript::WorldScript(char const* name, std::vector<uint16> enabledHooks)
+ }
+ 
+ template class AC_GAME_API ScriptRegistry<WorldScript>;
++
++void ScriptMgr::OnInstanceResetPeriod(uint32 mapId, uint32 difficulty, uint32& period)
++{
++    CALL_ENABLED_HOOKS(WorldScript, WORLDHOOK_ON_INSTANCE_RESET_PERIOD,
++        script->OnInstanceResetPeriod(mapId, difficulty, period));
++}
++
++void ScriptMgr::OnInstanceResetSchedule(uint32 mapId, uint32 difficulty, time_t& resetTime)
++{
++    CALL_ENABLED_HOOKS(WorldScript, WORLDHOOK_ON_INSTANCE_RESET_SCHEDULE,
++        script->OnInstanceResetSchedule(mapId, difficulty, resetTime));
++}
+diff --git a/src/server/game/Scripting/ScriptDefines/WorldScript.h b/src/server/game/Scripting/ScriptDefines/WorldScript.h
+index f5a51b8..9023394 100644
+--- a/src/server/game/Scripting/ScriptDefines/WorldScript.h
++++ b/src/server/game/Scripting/ScriptDefines/WorldScript.h
+@@ -37,6 +37,8 @@ enum WorldHook
+     WORLDHOOK_ON_AFTER_UNLOAD_ALL_MAPS,
+     WORLDHOOK_ON_BEFORE_FINALIZE_PLAYER_WORLD_SESSION,
+     WORLDHOOK_ON_BEFORE_WORLD_INITIALIZED,
++    WORLDHOOK_ON_INSTANCE_RESET_PERIOD,
++    WORLDHOOK_ON_INSTANCE_RESET_SCHEDULE,
+     WORLDHOOK_END
+ };
+ 
+@@ -55,6 +57,12 @@ public:
+     // Called when loading custom database tables
+     virtual void OnLoadCustomDatabaseTable() { }
+ 
++    // After the core rate is applied, before scheduling startup or subsequent resets.
++    virtual void OnInstanceResetPeriod(uint32 /*mapId*/, uint32 /*difficulty*/, uint32& /*period*/) { }
++
++    // All global times are loaded; no saves/binds/events have been created yet.
++    virtual void OnInstanceResetSchedule(uint32 /*mapId*/, uint32 /*difficulty*/, time_t& /*resetTime*/) { }
++
+     // Called before the world configuration is (re)loaded.
+     virtual void OnBeforeConfigLoad(bool /*reload*/) { }
+ 
+diff --git a/src/server/game/Scripting/ScriptMgr.h b/src/server/game/Scripting/ScriptMgr.h
+index 4b1e970..b7465fc 100644
+--- a/src/server/game/Scripting/ScriptMgr.h
++++ b/src/server/game/Scripting/ScriptMgr.h
+@@ -163,6 +163,8 @@ public: /* ServerScript */
+ 
+ public: /* WorldScript */
+     void OnLoadCustomDatabaseTable();
++    void OnInstanceResetPeriod(uint32 mapId, uint32 difficulty, uint32& period);
++    void OnInstanceResetSchedule(uint32 mapId, uint32 difficulty, time_t& resetTime);
+     void OnOpenStateChange(bool open);
+     void OnBeforeConfigLoad(bool reload);
+     void OnAfterConfigLoad(bool reload);
