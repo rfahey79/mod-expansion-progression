@@ -24,11 +24,15 @@ struct Config
 {
     bool enabled = true;
     int days = 3;
+    bool localTime = false;
+    int localHour = 4;
     template<class T> T GetOption(char const* key, T fallback)
     {
         std::string name(key);
         if (name == "Progression.OverrideRaidReset") return static_cast<T>(enabled);
         if (name == "Progression.RaidResetDays") return static_cast<T>(days);
+        if (name == "Progression.RaidResetUseLocalTime") return static_cast<T>(localTime);
+        if (name == "Progression.RaidResetLocalHour") return static_cast<T>(localHour);
         return fallback;
     }
 } config;

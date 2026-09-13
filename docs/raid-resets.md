@@ -119,6 +119,74 @@ For exact pre-migration rollback, stop the server and use the pre-upgrade backup
 with the prior module/core build; restoring a full backup also loses subsequent
 character progress. Do not restore old bind tables into a running server.
 
+## 4 AM Pacific time
+
+The original scheduler counted UTC days and retained the existing ZG timestamp.
+04:00 UTC is 21:00 PDT the previous day (20:00 PST in winter). Changing
+`Instance.ResetTimeHour` alone does not move that saved calendar.
+
+The local-time option uses the **worldserver process's timezone** and the OS
+timezone database. Set these in the installed module config:
+
+```ini
+Progression.OverrideRaidReset = 1
+Progression.RaidResetDays = 3
+Progression.RaidResetUseLocalTime = 1
+Progression.RaidResetLocalHour = 4
+```
+
+Defaults remain local-time mode off, local hour 4. Local hours must be 0..23
+(invalid values use 4). Local mode requires 2..365 reset days; 1 falls back to 3
+because core clamps extended-reset periods to at least 24 hours, which cannot
+represent a spring-forward daily interval. Three-day schedules and extensions
+use 71/72/73 hours as appropriate. Prefer an hour such as 4 that exists exactly
+once on DST transition days; nonexistent/ambiguous hours use OS normalization.
+
+On the VM, pull the module, rebuild/install as usual, then restart worldserver.
+**Do not apply the core hook patch again** if the earlier version is installed;
+the hook patch is unchanged by this local-time feature. No manual SQL is needed.
+Existing future binds retain their instances and progress while their timestamp
+moves to the first configured local hour at or after the old shared boundary.
+For example, a saved 21:00 PDT reset moves seven hours later to 04:00 PDT.
+Restarting an already-aligned calendar does not move it again.
+
+For a terminal/screen/tmux launcher, set this before its existing launch command:
+
+```sh
+export TZ=America/Los_Angeles
+# Now run your existing worldserver launch command in this shell.
+```
+
+Persist that export in the script you normally use to start worldserver; an
+export in an unrelated shell cannot change a running process or systemd service.
+For systemd, run `systemctl edit <your-worldserver-service>` and add:
+
+```ini
+[Service]
+Environment="TZ=America/Los_Angeles"
+```
+
+Then run `systemctl daemon-reload` and restart that service. Use the actual service
+name. For a container, set `TZ=America/Los_Angeles` in its environment and ensure
+the container includes timezone data. These are process-wide timezone settings:
+other server features that use local time see the same timezone. The module never
+changes the OS timezone or the process environment itself.
+
+`America/Los_Angeles` means 04:00 PDT in summer and 04:00 PST in winter. If you
+instead want **fixed PST (UTC-8) year-round**, use `TZ=Etc/GMT+8` on Linux; that
+would appear as 05:00 on a Los Angeles clock during summer.
+
+Confirm the startup log says `local raid calendar` and shows the next date at
+`04:00:00 PDT -0700` or `04:00:00 PST -0800`. If it says UTC, the launch environment
+has not selected Pacific time. On the VM, you can also convert the logged Unix
+timestamp using `TZ=America/Los_Angeles date -d @<timestamp>`.
+Check `.instance listbinds` again: your active MC instance ID must remain the same,
+and TTR should count down to the logged 4 AM Pacific boundary.
+
+The local-time tests exercise the real OS timezone conversions for both 2026 DST
+changes, migration from 04:00 UTC, repeat restarts, three-calendar-day recurrence,
+extended expiry, and the actual core loader's persisted/cached MC timestamps.
+
 ## Validation scope
 
 Standalone C++ tests execute the actual module hooks with narrow core doubles.

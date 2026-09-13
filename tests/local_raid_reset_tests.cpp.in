@@ -1,0 +1,87 @@
+// Use the OS timezone implementation, not a timezone mock.
+#include "ProgressionRaidReset.cpp"
+#include <cstdlib>
+#include <iostream>
+
+void Check(bool condition, char const* message)
+{
+    if (!condition) { std::cerr << message << '\n'; std::exit(1); }
+}
+time_t UTC(int year, int month, int day, int hour)
+{
+    std::tm calendar{};
+    calendar.tm_year = year - 1900;
+    calendar.tm_mon = month - 1;
+    calendar.tm_mday = day;
+    calendar.tm_hour = hour;
+#ifdef _WIN32
+    return _mkgmtime(&calendar);
+#else
+    return timegm(&calendar);
+#endif
+}
+int main()
+{
+    // Tests are single-threaded. Production never changes the process timezone.
+#ifdef _WIN32
+    _putenv_s("TZ", "PST8PDT");
+    _tzset();
+#else
+    setenv("TZ", "America/Los_Angeles", 1);
+    tzset();
+#endif
+    using namespace Progression::RaidReset;
+    time_t const oldUTC = UTC(2026, 9, 13, 4);
+    time_t const pacific = UTC(2026, 9, 13, 11);
+    Check(LocalCalendar(oldUTC).tm_hour == 21, "04 UTC must be 9 PM PDT on previous day");
+    Check(AlignLocalHour(oldUTC, 4) == pacific, "Migrate evening reset to following 4 AM Pacific");
+    Check(AlignLocalHour(pacific, 4) == pacific, "Already local anchor must not move on restart");
+    Check(NextLocalReset(pacific, pacific, 3, 4) == pacific, "Startup exact boundary retained");
+    Check(NextLocalReset(pacific, pacific + 1, 3, 4) == UTC(2026, 9, 16, 11), "Three calendar days after reset");
+    time_t const spring = UTC(2026, 3, 6, 12); // Fri 4 AM PST
+    time_t const springNext = NextLocalReset(spring, spring + 1, 3, 4);
+    Check(springNext == UTC(2026, 3, 9, 11), "Spring transition must remain at 4 AM PDT");
+    Check(springNext - spring == 71 * 3600, "Spring three-day cycle is 71 hours");
+    time_t const fall = UTC(2026, 10, 30, 11); // Fri 4 AM PDT
+    time_t const fallNext = NextLocalReset(fall, fall + 1, 3, 4);
+    Check(fallNext == UTC(2026, 11, 2, 12), "Fall transition must remain at 4 AM PST");
+    Check(fallNext - fall == 73 * 3600, "Fall three-day cycle is 73 hours");
+    Check(NextLocalReset(fall, UTC(2027, 2, 1, 0), 3, 4) == UTC(2027, 2, 3, 12), "Long downtime preserves local calendar phase");
+    sMapStore.entries = {{309, {true}}, {509, {true}}, {409, {true}}, {36, {false}}};
+    saves.times = {{{309, 0}, oldUTC}, {{509, 0}, oldUTC}};
+    config.localTime = true;
+    config.localHour = 4;
+    GameTime::now = UTC(2026, 9, 12, 23);
+    ProgressionRaidResetScript script;
+    script.OnAfterConfigLoad(false);
+    time_t mc = oldUTC;
+    script.OnInstanceResetSchedule(409, 0, mc, true);
+    Check(mc == pacific, "Module migrates active MC bind to 4 AM Pacific");
+    GameTime::now = pacific;
+    script.OnInstanceResetSchedule(409, 0, mc, false);
+    Check(mc == UTC(2026, 9, 16, 11), "Runtime hook advances three local dates");
+    // The core adds period to the next reset to calculate an extended expiry.
+    GameTime::now = UTC(2026, 3, 3, 12) + 1;
+    saves.times = {{{309, 0}, UTC(2026, 3, 3, 12)}};
+    ProgressionRaidResetScript extension;
+    extension.OnAfterConfigLoad(false);
+    extension.OnInstanceResetSchedule(409, 0, mc, true);
+    uint32 period = 3 * Day;
+    extension.OnInstanceResetPeriod(409, 0, period);
+    Check(mc == spring && period == 71 * 3600, "Extended expiry must also observe DST");
+    Check(mc + period == springNext, "Extended reset stays at local 4 AM");
+    time_t dungeon = oldUTC;
+    script.OnInstanceResetSchedule(36, 1, dungeon, true);
+    Check(dungeon == oldUTC, "Dungeon calendar unchanged");
+    config.localHour = 8;
+    script.OnAfterConfigLoad(true);
+    GameTime::now = pacific;
+    script.OnInstanceResetSchedule(409, 0, mc, false);
+    Check(LocalCalendar(mc).tm_hour == 4, "Local hour reload is deferred until restart");
+    config.days = 1;
+    ProgressionRaidResetScript daily;
+    daily.OnAfterConfigLoad(false);
+    daily.OnInstanceResetPeriod(409, 0, period);
+    Check(period == 3 * Day, "Local daily setting must safely fall back because core clamps extensions to 24h");
+    std::cout << "Pacific calendar migration and DST tests passed\n";
+}

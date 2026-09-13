@@ -116,6 +116,20 @@ hour; `Instance.ResetTimeHour` is used when bootstrapping a missing calendar.
 Raid settings are startup-only: `.reload config` warns about changed values and
 keeps the running calendar intact until restart.
 
+For **4 AM Pacific local time**, including daylight saving, run worldserver with
+`TZ=America/Los_Angeles` and enable:
+
+```ini
+Progression.RaidResetUseLocalTime = 1
+Progression.RaidResetLocalHour = 4
+```
+
+This moves the saved evening UTC reset to the following local morning, then
+counts three local calendar days. Existing hooks are sufficient: no new core
+patch or manual SQL is needed. Pull, rebuild/install, and restart with these
+settings. See [Pacific-time setup](docs/raid-resets.md#4-am-pacific-time) for
+terminal and systemd launch instructions.
+
 ## Commands and persistence
 
 | Command | Behavior |

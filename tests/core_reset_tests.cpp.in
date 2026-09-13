@@ -140,4 +140,25 @@ int main()
     Check(saves.m_resetTimeQueue.size() == 1 && saves.m_resetTimeQueue.begin()->first == now + 5 * 60,
         "The next five-minute warning must remain queued");
     std::cout << "Actual core queue insertion regression passed\n";
+#ifdef _WIN32
+    _putenv_s("TZ", "PST8PDT");
+    _tzset();
+#else
+    setenv("TZ", "America/Los_Angeles", 1);
+    tzset();
+#endif
+    saves = {};
+    config.enabled = true;
+    config.localTime = true;
+    config.localHour = 4;
+    CharacterDatabase.times = {{{309, 0}, anchor}, {{509, 0}, anchor},
+        {{409, 0}, now + 7 * DAY}, {{36, 1}, anchor}};
+    ProgressionRaidResetScript pacific;
+    pacific.OnAfterConfigLoad(false);
+    sScriptMgr = &pacific;
+    saves.LoadResetTimes();
+    Check(saves.GetResetTimeFor(409, Normal) == anchor + 7 * HOUR, "Actual core migrates cached expiry to 4 AM Pacific");
+    Check(CharacterDatabase.times[{409, 0}] == anchor + 7 * HOUR, "Pacific expiry is persisted");
+    Check(CharacterDatabase.times[{36, 1}] == anchor, "Local raid mode preserves dungeon reset timestamp");
+    std::cout << "Actual core Pacific migration passed\n";
 }

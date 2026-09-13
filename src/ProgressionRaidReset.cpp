@@ -21,22 +21,43 @@ public:
     {
         bool const enabled = sConfigMgr->GetOption<bool>("Progression.OverrideRaidReset", true);
         int const days = sConfigMgr->GetOption<int>("Progression.RaidResetDays", 3);
+        bool const localTime = sConfigMgr->GetOption<bool>("Progression.RaidResetUseLocalTime", false);
+        int const configuredHour = sConfigMgr->GetOption<int>("Progression.RaidResetLocalHour", 4);
+        int const hour = configuredHour >= 0 && configuredHour <= 23 ? configuredHour : 4;
+        uint32 const validatedDays = localTime && days == 1 ? 3 : Progression::RaidReset::ValidDays(days);
         if (reload)
         {
-            if (enabled != _enabled || Progression::RaidReset::ValidDays(days) != _days)
+            if (enabled != _enabled || validatedDays != _days
+                || localTime != _localTime || hour != _hour)
                 LOG_WARN("module", "mod-progression: raid reset config changed; restart worldserver to apply it.");
             return;
         }
         _enabled = enabled;
-        _days = Progression::RaidReset::ValidDays(days);
+        _days = validatedDays;
+        _localTime = localTime;
+        _hour = hour;
+        if (configuredHour != hour)
+            LOG_ERROR("module", "mod-progression: RaidResetLocalHour must be 0..23; using 4.");
         if (days < 1 || days > 365)
             LOG_ERROR("module", "mod-progression: RaidResetDays must be 1..365; using 3.");
+        if (localTime && days == 1)
+            LOG_ERROR("module", "mod-progression: local-time raid resets require 2..365 days; "
+                "core extended resets have a 24-hour minimum. Using 3.");
     }
 
     void OnInstanceResetPeriod(uint32 mapId, uint32 /*difficulty*/, uint32& period) override
     {
         if (_enabled && IsRaid(mapId))
+        {
             period = _days * Progression::RaidReset::Day;
+            // Core uses this period for the extended expiry after the next
+            // reset. Calendar days can span 23/25-hour days around DST.
+            if (_localTime && _anchorLoaded)
+            {
+                time_t const next = NextBoundary(GameTime::GetGameTime().count() + 1);
+                period = uint32(NextBoundary(next + 1) - next);
+            }
+        }
     }
 
     void OnInstanceResetSchedule(uint32 mapId, uint32 /*difficulty*/, time_t& resetTime, bool loading) override
@@ -54,31 +75,56 @@ public:
             time_t const aq = sInstanceSaveMgr->GetResetTimeFor(509, Difficulty(0));
             time_t const now = GameTime::GetGameTime().count();
             uint32 const period = _days * Progression::RaidReset::Day;
-            time_t const nextZG = Progression::RaidReset::NextReset(zg, now, period);
-            time_t const nextAQ = Progression::RaidReset::NextReset(aq, now, period);
+            auto nextFor = [this, now, period](time_t saved)
+            {
+                if (_localTime && saved > 0)
+                    return time_t(Progression::RaidReset::NextLocalReset(
+                        Progression::RaidReset::AlignLocalHour(saved, _hour), now, _days, _hour));
+                return time_t(Progression::RaidReset::NextReset(saved, now, period));
+            };
+            time_t const nextZG = nextFor(zg);
+            time_t const nextAQ = nextFor(aq);
             _anchor = nextZG ? nextZG : nextAQ;
             if (!_anchor)
             {
                 // Bootstrap one calendar at the core's configured reset hour.
                 _anchor = (now / Progression::RaidReset::Day) * Progression::RaidReset::Day
                     + period + sWorld->getIntConfig(CONFIG_INSTANCE_RESET_TIME_HOUR) * HOUR;
+                if (_localTime)
+                {
+                    std::tm calendar = Progression::RaidReset::LocalCalendar(now);
+                    calendar.tm_mday += _days;
+                    calendar.tm_hour = _hour;
+                    calendar.tm_min = calendar.tm_sec = 0;
+                    _anchor = Progression::RaidReset::LocalEpoch(calendar);
+                }
                 LOG_WARN("module", "mod-progression: no ZG/AQ20 reset anchor; initializing shared calendar at {}.",
                     uint64(_anchor));
             }
-            else
+            if (_localTime)
             {
-                LOG_INFO("module", "mod-progression: raid resets every {} days; anchor map={}, next reset={}.",
-                    _days, nextZG ? 309 : 509, uint64(_anchor));
-                if (nextZG && nextAQ && nextZG != nextAQ)
-                    LOG_WARN("module", "mod-progression: ZG/AQ20 calendars differ; using ZG for all raids.");
+                std::tm const calendar = Progression::RaidReset::LocalCalendar(_anchor);
+                char localLabel[80]{};
+                std::strftime(localLabel, sizeof(localLabel), "%Y-%m-%d %H:%M:%S %Z %z", &calendar);
+                LOG_INFO("module", "mod-progression: local raid calendar; next reset={} (unix {}). "
+                    "Timezone comes from the worldserver process (TZ/OS).", localLabel, uint64(_anchor));
             }
+            LOG_INFO("module", "mod-progression: raid resets every {} days; anchor map={}, next reset={}.",
+                _days, nextZG ? 309 : (nextAQ ? 509 : 0), uint64(_anchor));
+            if (nextZG && nextAQ && nextZG != nextAQ)
+                LOG_WARN("module", "mod-progression: ZG/AQ20 calendars differ; using ZG for all raids.");
         }
         if (_anchor && IsRaid(mapId))
-            resetTime = loading ? _anchor : Progression::RaidReset::NextReset(
-                _anchor, GameTime::GetGameTime().count() + 1, _days * Progression::RaidReset::Day);
+            resetTime = loading ? _anchor : NextBoundary(GameTime::GetGameTime().count() + 1);
     }
 
 private:
+    time_t NextBoundary(time_t now) const
+    {
+        return _localTime ? Progression::RaidReset::NextLocalReset(_anchor, now, _days, _hour)
+            : Progression::RaidReset::NextReset(_anchor, now, _days * Progression::RaidReset::Day);
+    }
+
     static bool IsRaid(uint32 mapId)
     {
         MapEntry const* map = sMapStore.LookupEntry(mapId);
@@ -87,6 +133,8 @@ private:
 
     bool _enabled = true;
     bool _anchorLoaded = false;
+    bool _localTime = false;
+    int _hour = 4;
     uint32 _days = Progression::RaidReset::DefaultDays;
     time_t _anchor = 0;
 };
